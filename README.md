@@ -144,33 +144,35 @@ const inject = ['slots', 'locale', 'sessions', 'remote', 'remote.session']
 
 ## 安装
 
-本插件住在 [`lq3399/dsh-plugins`](https://github.com/lq3399/dsh-plugins) 仓库的
-`dsh-model-label/` 目录里（每个插件一层顶层目录）。用 DSH 自带的插件命令从仓库装：
+本插件是独立仓库 [`lq3399/dsh-model-label`](https://github.com/lq3399/dsh-model-label)，
+`package.json` 就在仓库根目录。用 DSH 自带的插件命令安装：
 
 ```bash
-dsh plugin --profile desktop add "github:lq3399/dsh-plugins#path:/dsh-model-label"
+dsh plugin --profile desktop add "github:lq3399/dsh-model-label"
 ```
 
-`#path:/dsh-model-label` 是 pnpm 的子目录语法：`#` 前是仓库，`path:` 指向包所在的
-顶层目录。本仓库不是 monorepo，没有 `pnpm-workspace.yaml`，所以这个 `path:` 是
-**必需**的 —— 少了它 pnpm 会去找仓库根，而根上没有 `package.json`。
+> **仓库必须能被匿名读取。** `github:` 规格由 pnpm 走匿名 HTTPS `git ls-remote`
+> 解析；仓库为私有时会报
+> `ERR_PNPM_GIT_RESOLVE_FAILED: could not read Username for 'https://github.com'`。
+> 把仓库设为 Public 之后，这条命令对任何人都可用。
 
-**spec 一定要加引号。** `&` 在 PowerShell、cmd 和 bash 里都是控制字符：不加引号
-会被 shell 从 `&` 处截成两条命令，安装静默地只装到一半（PowerShell 里表现为
-后台任务，cmd 里表现为「path:/... 不是内部或外部命令」）。
-
-也可以钉住分支或提交：
+也可以钉住分支或提交（pnpm 的 git 依赖语义）：
 
 ```bash
-dsh plugin --profile desktop add "github:lq3399/dsh-plugins#main&path:/dsh-model-label"
-dsh plugin --profile desktop add "github:lq3399/dsh-plugins#<commit-sha>&path:/dsh-model-label"
+dsh plugin --profile desktop add "github:lq3399/dsh-model-label#main"
+dsh plugin --profile desktop add "github:lq3399/dsh-model-label#<commit-sha>"
 ```
 
-`--profile desktop` 是必需的：桌面端 profile 由应用独占管理，`dsh` 会带上应用
-自己的 pnpm 与授权去改它。安装完成后不用手工编辑任何配置 —— 命令会自动把
-`dsh-model-label` 写进该 profile `package.json` 的 `dependencies`，并因为本包声明了
-`dsh.bundle.patch` 而把它追加进 `dsh.profile.bundles`。bundle 列表的这次变动由管理器
-热应用，刷新窗口即可看到效果（`client.js` 本身的改动在 HMR 监听下刷新页面即可）。
+`--profile desktop` 指定桌面端的 profile；其他 profile 同理（如 `--profile web`）。
+spec 含 `:` 与 `#`，统一加引号最稳妥。
+
+安装完成后不需要手工编辑任何配置 —— 命令会自动把本包写进该 profile
+`package.json` 的 `dependencies`（记录为 `git+https://…`），并因为本包声明了
+`dsh.bundle.patch` 而把 `dsh-model-label` 追加进 `dsh.profile.bundles`
+（`@deepseek-ai/dsh-base` 保持在最前）。刷新应用窗口即可看到效果。
+
+以上命令均在 dsh 0.2.1-rc.2 上实测通过；匿名安装私有仓库的失败形态
+同样是实测结果。
 
 ## 卸载
 
@@ -178,8 +180,8 @@ dsh plugin --profile desktop add "github:lq3399/dsh-plugins#<commit-sha>&path:/d
 dsh plugin --profile desktop remove dsh-model-label
 ```
 
-`dependencies` 里的条目和 `dsh.profile.bundles` 里的那一行会一并移除。若窗口里
-模型位仍显示旧样式，刷新页面即可。
+`dependencies` 里的条目和 `dsh.profile.bundles` 里的那一行会一并移除。
+若窗口里模型位仍显示旧样式，刷新页面即可。
 
 ## 本地开发
 
@@ -187,13 +189,13 @@ dsh plugin --profile desktop remove dsh-model-label
 `client.js` 刷新页面即可，不需要重装）：
 
 ```bash
-git clone https://github.com/lq3399/dsh-plugins.git
-dsh plugin --profile desktop add "link:/path/to/dsh-plugins/dsh-model-label"
+git clone https://github.com/lq3399/dsh-model-label.git
+dsh plugin --profile desktop add "link:<绝对路径>/dsh-model-label"
 ```
 
-本地路径必须是**绝对路径**，且只能走 `link:` / `file:` 前缀：官方安装解析器拒绝
-相对路径（相对路径会相对 profile 目录解析，指向 profile 内部）。开发期用 `link:`
-而不是 `file:` —— 后者会把目录硬链接进 store，改源码不即时反映。
+本地路径必须是**绝对路径**（`link:`/`file:` 记录在 profile 的
+`package.json` 里，相对路径会相对该目录解析）。开发期用 `link:` 而不是
+`file:` —— 后者会把目录硬链接进 store，改源码不即时反映。
 
 ## 保留了什么
 
