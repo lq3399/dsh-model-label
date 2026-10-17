@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-label",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "type": "module",
   "description": "Show the composer's model seat as {provider}/{model} · {effort} in the bottom-right corner of the DSH Web GUI, with a provider-folded tree for the model list.",
