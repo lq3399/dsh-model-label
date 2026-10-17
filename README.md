@@ -219,9 +219,21 @@ dsh plugin --profile desktop add "link:<绝对路径>/dsh-model-label"
 按官方插件实践，**不把任何 Harness Client 包当模块加载**
 （不 `require('@deepseek-ai/…')`）——这类包的内部随时可能变动。原版从
 `dsh-client-ui-primitives` 借用的几个控件全部自持：图标、忙碌圆点、菜单
-表面、搜索输入框、锚定 toast、模糊排序 `rankByName`，颜色取 `--dsw-*` 主题
-变量（另沿用 `--dsh-scrollbar-*` 与宿主的 `scrollable` 类以对齐滚动条），
-类名收在 `dml_` 前缀下。跟随宿主主题切换，不随 primitives 重构而坏。
+表面、搜索输入框、锚定 toast、模糊排序 `rankByName`，类名收在 `dml_` 前缀下。
+跟随宿主主题切换，不随 primitives 重构而坏。
+
+`dsh.client.inject` 按官方声明模式列出本插件消费的服务提供方
+（`dsh-client-ui-renderer` 的 slots、`dsh-client-ui-model-selection` 的
+`modelDirectories`、`dsh-api-session-controller` 的 `sessions`、
+`dsh-api-remotes` 的 `remote`/`remote.session`、`dsh-client-locale` 的
+`locale`），只用于排序激活，不引入模块依赖。
+
+样式依赖说明：颜色一律取 `--dsw-*` 主题变量；除此之外，为了让外观与
+shipped seat 逐字一致，有意原样沿用了它的半径/阴影/焦点环 token
+（`--dsw-radius-*`、`--dsw-elevation-prominent`、`--dsw-focus-ring-color`）、
+宿主的滚动条变量（`--dsh-scrollbar-*`、`scrollable` 类）与作曲家
+图标/文本显示变量（`--dsh-composer-model-*`）。这些是宿主的内部 CSS 契约
+（官方座位同款），宿主改版时可能静默退化——这是刻意的取舍，不是疏漏。
 
 ## 验证
 

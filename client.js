@@ -1291,9 +1291,11 @@ window.__ModuleLoader__.load({
       })
     }
 
+    // The browser half exports only `apply` and `inject`, like every shipped
+    // client half. The plugin's name comes from the Loader row's `name` (and
+    // the module-table id on the load call), never from this module.
     exports.apply = apply
     exports.inject = inject
-    exports.name = 'dsh-model-label'
 
     return module.exports
   },

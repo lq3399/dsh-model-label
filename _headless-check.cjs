@@ -107,7 +107,11 @@ check(
   'no Harness Client package is loaded as a module (official practices)',
   !/require\(\s*['"]@deepseek-ai\//.test(source),
 )
-check('exports.name', exportsObj.name === 'dsh-model-label', String(exportsObj.name))
+check(
+  'the client half exports only apply + inject (shipped client shape)',
+  JSON.stringify(Object.keys(exportsObj).sort()) === JSON.stringify(['apply', 'inject']),
+  JSON.stringify(Object.keys(exportsObj)),
+)
 check(
   'exports.inject declares slots + locale',
   Array.isArray(exportsObj.inject) && exportsObj.inject.includes('slots') && exportsObj.inject.includes('locale'),

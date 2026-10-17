@@ -95,7 +95,35 @@ if (/require\(\s*['"]@deepseek-ai\//.test(source)) {
   ok.push('loads no Harness Client package as a module')
 }
 
-// ── 6. no leftover diagnostic scaffolding ────────────────────────────────────
+// ── 6. dsh.client.inject declares the service providers ─────────────────────
+// The shipped seat/badge convention: list the packages whose client halves
+// provide the services this one consumes, so client halves activate in a
+// deterministic order. The runtime `ctx.inject` still waits for the services,
+// so a missing entry is convention drift rather than a hard failure — but it
+// is exactly the drift the official declaration pattern avoids.
+{
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'))
+  const declaredInject = pkg?.dsh?.client?.inject
+  const required = [
+    '@deepseek-ai/dsh-client-ui-renderer',
+    '@deepseek-ai/dsh-client-ui-model-selection',
+    '@deepseek-ai/dsh-api-session-controller',
+    '@deepseek-ai/dsh-api-remotes',
+    '@deepseek-ai/dsh-client-locale',
+  ]
+  if (!Array.isArray(declaredInject)) {
+    problems.push('dsh.client.inject is missing from package.json')
+  } else {
+    const missing = required.filter(dep => !declaredInject.includes(dep))
+    if (missing.length > 0) {
+      problems.push(`dsh.client.inject is missing: ${missing.join(', ')}`)
+    } else {
+      ok.push('dsh.client.inject declares the five service providers')
+    }
+  }
+}
+
+// ── 7. no leftover diagnostic scaffolding ────────────────────────────────────
 for (const stray of ['dsh-model-label-diagnostic', 'cold-probe', 'model-label-probe', 'sessionStorage.setItem']) {
   if (source.includes(stray)) problems.push(`leftover diagnostic scaffolding: ${stray}`)
 }
