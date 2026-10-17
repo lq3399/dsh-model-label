@@ -1,0 +1,10 @@
+# Notices
+
+This project includes material derived from DeepSeek Harness packages:
+
+- `@deepseek-ai/dsh-client-ui-model-selection` (MIT)
+- `@deepseek-ai/dsh-client-ui-primitives` (MIT)
+
+The composer model-seat component structure, CSS, icons, toast, and the fuzzy
+`rankByName` ranking in `client.js` are adapted from those packages, whose
+copyright and license are retained in `LICENSE`.

@@ -91,8 +91,9 @@ occupants:
 - 无官方占用时，槽位回落到目录名，与插件自己渲染完全同文。
 
 placement 与官方一致：触发器传 `trigger`，根面板 Model 格传 `menu`，
-模型行传 `option`；`provider` 是已本地化的 `{id, name}`，与官方座位
-传给该槽位的形状相同。
+模型行传 `option`；`provider` 是已本地化的 `{id, name}`，`model` 是**完整的
+catalog 条目**，并外包与官方相同的 `<span data-provider-id data-model-id>`
+锚点——与官方座位传给该槽位的 ownerProps 形状一致。
 
 ### 为什么没有复用原版的 `MenuGroup`
 
@@ -199,11 +200,13 @@ dsh plugin --profile desktop add "link:<绝对路径>/dsh-model-label"
 
 ## 保留了什么
 
-除了触发器的标签文本和模型面板的树形结构，官方选择器的行为全部保留：
+除了触发器的标签文本和模型面板的树形结构，官方选择器的主要行为保留：
 
 - 两级菜单（模型 / 推理等级）、模糊搜索
-- 完整键盘操作（↑↓ / Enter / Tab / Esc / Shift+Tab）
-- 切换中的 spinner、失败 toast、目录加载失败的 Retry 条
+- 完整键盘操作（↑↓ / Enter / Tab / Esc / Shift+Tab），钻入/退回面板后焦点
+  会交还给搜索框或根面板对应格
+- 切换中的 spinner、失败 toast；目录加载失败的 Retry 条只在**加载**失败时
+  出现（选择失败走 toast，不额外弹 Retry 条）
 - 与 `/model` 弹窗共用同一个 per-session `ModelDirectory`，两边永远一致
 
 菜单里每行只显示模型名，和原版一致。
@@ -216,9 +219,9 @@ dsh plugin --profile desktop add "link:<绝对路径>/dsh-model-label"
 按官方插件实践，**不把任何 Harness Client 包当模块加载**
 （不 `require('@deepseek-ai/…')`）——这类包的内部随时可能变动。原版从
 `dsh-client-ui-primitives` 借用的几个控件全部自持：图标、忙碌圆点、菜单
-表面、搜索输入框、锚定 toast、模糊排序 `rankByName`，样式只用
-`--dsw-*` 主题变量，类名收在 `dml_` 前缀下。跟随宿主主题切换，
-不随 primitives 重构而坏。
+表面、搜索输入框、锚定 toast、模糊排序 `rankByName`，颜色取 `--dsw-*` 主题
+变量（另沿用 `--dsh-scrollbar-*` 与宿主的 `scrollable` 类以对齐滚动条），
+类名收在 `dml_` 前缀下。跟随宿主主题切换，不随 primitives 重构而坏。
 
 ## 验证
 
@@ -264,3 +267,6 @@ provider/model）。
 | `_headless-check.cjs` | 无头验证脚本（注册、标签、树的折叠语义） |
 | `_coldstart-check.cjs` | 冷启动依赖验证（`remote.session`） |
 | `_render-check.cjs` | 真实 React + jsdom 点击驱动（含「开合不滚动」回归测试） |
+| `locale/*.json` | Plugin Manager / Settings 的中英文标题与描述 |
+| `icon.svg` | 插件图标 |
+| `LICENSE` / `NOTICE` | MIT 许可与来源署名（部分代码改编自官方 model-selection / primitives） |

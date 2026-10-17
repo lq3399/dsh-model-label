@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Model label with provider",
+    "description": "Shows the composer's model seat as {provider}/{model} · {effort}, and folds the model list into a provider tree."
+  }
+}

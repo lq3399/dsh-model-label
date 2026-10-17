@@ -146,7 +146,7 @@ window.__ModuleLoader__.load({
 .dml_menu{z-index:1100;--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(240px,100vw - 32px);max-width:min(420px,100vw - 32px);max-height:min(360px,100vh - 96px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border-radius:var(--dsw-radius-md);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);border:0;flex-direction:column;padding:4px;display:flex;position:fixed;overflow:hidden}
 .dml_status,.dml_empty{color:var(--dsw-alias-label-tertiary);padding:8px;font-size:12px;line-height:18px}
 .dml_error,.dml_warning{border-radius:var(--dsw-radius-md);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;font-size:12px;line-height:18px;display:flex}
-.dml_warning{background:var(--dsw-alias-interactive-bg-hover-warning,#3a3320);color:var(--dsw-alias-state-warning-primary,#f0a441)}
+.dml_warning{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-state-warn-label)}
 .dml_retry{color:inherit;cursor:pointer;background:0 0;border:0;font:inherit;text-decoration:underline;padding:0}
 .dml_groups{flex-direction:column;display:flex;padding:2px;overflow-y:auto}
 .dml_searchRow{padding:4px 4px 6px;display:flex;position:relative;align-items:center}
@@ -348,6 +348,12 @@ window.__ModuleLoader__.load({
       const [selectionFocus, setSelectionFocus] = useState(false)
       const [toast, setToast] = useState(null)
       const toastSeq = useRef(0)
+      // Which verb the last directory interaction was ('load' | 'select'). The
+      // in-menu error strip is the CATALOG-LOAD surface, so it renders only
+      // after a failed load; a failed select reports through the toast alone —
+      // the strip's "Reload" button reloads the catalog, it does not retry the
+      // selection (the shipped seat gates the strip the same way).
+      const lastActionRef = useRef('load')
       const rootRef = useRef(null)
       const triggerRef = useRef(null)
       const searchRef = useRef(null)
@@ -357,6 +363,11 @@ window.__ModuleLoader__.load({
       // Signature of the last scroll reveal, so folding the tree never re-scrolls
       // while a changed highlight, query, or pane still does.
       const lastRevealRef = useRef(null)
+      // Pending pane-focus intent ('model' | 'effort' | 'drill' | null): which
+      // control should receive focus once the pane transition lands. Drilling
+      // unmounts the button the keyboard came from, so without this handoff
+      // focus falls to <body> and the menu stops receiving key events.
+      const paneFocus = useRef(null)
       const id = React.useId()
 
       const groups = useMemo(() => orderModelProviders(state.groups), [state.groups])
@@ -378,6 +389,10 @@ window.__ModuleLoader__.load({
         [groups],
       )
       const showSearch = choices.length > 4
+      // Tracks whether the search box existed on the previous render, so a
+      // search-mode flip while the model pane is open hands focus to the box
+      // (matching the shipped seat's drill-on-mode-change behavior).
+      const previousShowSearch = useRef(showSearch)
       const searching = showSearch && query.trim() !== ''
       const filteredGroups = useMemo(
         () =>
@@ -403,18 +418,27 @@ window.__ModuleLoader__.load({
       // decorations (the 1017 release badge today) working inside this seat;
       // with no occupant the outlet renders our fallback, the plain catalog
       // name — identical to the old self-rendered label.
+      //
+      // The owner props match the shipped seat exactly: `model` is the COMPLETE
+      // catalog entry (a decorator may read `model.reasoning`, not just the
+      // name), and the slot outlet is wrapped in the same
+      // `<span data-provider-id data-model-id>` anchor the shipped seat uses.
       const labelInner = useCallback(
         (group, model, placement, selected) => {
           if (typeof renderSlot !== 'function') return model.name
-          return renderSlot(
-            'conversation.input.model.label',
-            {
-              provider: { id: group.id, name: providerName(group) },
-              model: { id: model.id, name: model.name },
-              placement,
-              selected,
-            },
-            { fallback: model.name },
+          return h(
+            'span',
+            { 'data-provider-id': group.id, 'data-model-id': model.id },
+            renderSlot(
+              'conversation.input.model.label',
+              {
+                provider: { id: group.id, name: providerName(group) },
+                model,
+                placement,
+                selected,
+              },
+              { fallback: model.name },
+            ),
           )
         },
         [renderSlot, providerName],
@@ -537,7 +561,10 @@ window.__ModuleLoader__.load({
         }
       }, [props])
 
-      const reload = load
+      const reload = () => {
+        lastActionRef.current = 'load'
+        load()
+      }
 
       const select = useCallback(
         selection => {
@@ -624,6 +651,32 @@ window.__ModuleLoader__.load({
         }
       }, [open, pane, state, query, expandedOverrides])
 
+      // Hand the keyboard to the control the last pane transition named: after
+      // a drill, the model pane's search box (or the checked row); after a back,
+      // the root pane's cell that opened it. The effect keys on the transition,
+      // not on the refs — the target control may mount only after this render.
+      useEffect(() => {
+        const changedSearchMode = previousShowSearch.current !== showSearch
+        previousShowSearch.current = showSearch
+        const intent = paneFocus.current ?? (changedSearchMode && pane === 'model' ? 'drill' : null)
+        paneFocus.current = null
+        if (!open || intent === null) return
+        if (intent === 'drill') {
+          if (pane === 'model' && showSearch) {
+            searchRef.current?.focus()
+            return
+          }
+          ;(
+            menuRef.current?.querySelector('[role="menuitemradio"][aria-checked="true"]:not([disabled])') ??
+            itemRefs.current.find(item => item !== null && !item.disabled) ??
+            triggerRef.current
+          )?.focus()
+          return
+        }
+        const cell = itemRefs.current[intent === 'effort' ? 1 : 0]
+        ;(cell !== null && cell !== undefined && !cell.disabled ? cell : triggerRef.current)?.focus()
+      }, [open, pane, showSearch])
+
       if (!available) return null
 
       const show = () => {
@@ -631,6 +684,7 @@ window.__ModuleLoader__.load({
         triggerRef.current?.focus()
         setQuery('')
         setHighlightedKey(null)
+        if (state.current === null) paneFocus.current = 'drill'
         setPane(state.current === null ? 'model' : 'root')
         setOpen(true)
         load()
@@ -647,9 +701,14 @@ window.__ModuleLoader__.load({
       const drill = next => {
         setQuery('')
         setHighlightedKey(null)
+        paneFocus.current = 'drill'
         setPane(next)
       }
-      const back = () => setPane('root')
+      /** Leave a drilled pane for the root one, handing the keyboard back to its cell. */
+      const back = from => {
+        paneFocus.current = from
+        setPane('root')
+      }
 
       const choose = selection => {
         if (state.current?.provider === selection.provider && state.current.model === selection.model) {
@@ -688,6 +747,7 @@ window.__ModuleLoader__.load({
         })
       }
       const submit = selection => {
+        lastActionRef.current = 'select'
         setSelectionFocus(true)
         triggerRef.current?.focus()
         select(selection).then(settleSelection)
@@ -763,7 +823,7 @@ window.__ModuleLoader__.load({
         if (event.nativeEvent?.isComposing) return
         if (event.key === 'Escape' && open) {
           event.preventDefault()
-          if (pane !== 'root' && state.current !== null) back()
+          if (pane !== 'root' && state.current !== null) back(pane)
           else close(true)
           return
         }
@@ -792,7 +852,7 @@ window.__ModuleLoader__.load({
         if (event.key === 'Tab') {
           if (event.shiftKey) {
             event.preventDefault()
-            if (pane !== 'root' && state.current !== null) back()
+            if (pane !== 'root' && state.current !== null) back(pane)
             else close(true)
             return
           }
@@ -970,6 +1030,7 @@ window.__ModuleLoader__.load({
                     ),
                   state.status === 'loading' && h('div', { className: 'dml_status' }, t('status.loading')),
                   state.error !== null &&
+                    lastActionRef.current === 'load' &&
                     h(
                       'div',
                       { className: 'dml_error' },
@@ -1104,6 +1165,7 @@ window.__ModuleLoader__.load({
                   Fragment,
                   null,
                   state.error !== null &&
+                    lastActionRef.current === 'load' &&
                     h(
                       'div',
                       { className: 'dml_error' },

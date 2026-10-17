@@ -305,6 +305,16 @@ check(
     JSON.stringify(slotCalls[0]),
   )
   check(
+    'the model owner prop is the COMPLETE catalog entry (not {id,name})',
+    slotCalls[0]?.owner?.model?.reasoning?.efforts?.length === 2 &&
+      slotCalls[0]?.owner?.model?.reasoning?.defaultEffort === 'high',
+    JSON.stringify(Object.keys(slotCalls[0]?.owner?.model ?? {})),
+  )
+  check(
+    'the trigger label is wrapped in the official data-* anchor span',
+    findNode(slotRendered, n => n.props?.['data-provider-id'] === 'deepseek-official' && n.props?.['data-model-id'] === 'deepseek-v4.1-flash').length >= 1,
+  )
+  check(
     'the trigger still reads provider/model through the slot',
     collectText(slotTrigger).join('').includes('DeepSeek/DeepSeek V4.1 Flash'),
     collectText(slotTrigger).join(''),
