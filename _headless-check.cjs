@@ -57,25 +57,17 @@ const react = {
   useSyncExternalStore: (sub, get) => get(),
 }
 
-const primitives = new Proxy(
-  { rankByName: items => items },
-  {
-    get: (target, prop) => {
-      if (prop in target) return target[prop]
-      return function Stub() {
-        return null
-      }
-    },
-  },
-)
-
+// The refactor self-hosts every control the stock seat borrowed from
+// `dsh-client-ui-primitives` (harness plugin practices forbid loading Harness
+// Client packages as modules), so the platform table is react/react-dom only —
+// and the require stub below FAILS the check if the bundle ever reaches for
+// `@deepseek-ai/*` again.
 const platformModules = {
   react,
   'react/jsx-runtime': { jsx: react.createElement, jsxs: react.createElement, Fragment: react.Fragment },
   // Pass the portalled children through so the menu is part of the tree this
   // check walks; a real DOM portal only changes where they are mounted.
   'react-dom': { createPortal: children => children },
-  '@deepseek-ai/dsh-client-ui-primitives': primitives,
 }
 
 let loaded = null
@@ -111,6 +103,10 @@ const check = (label, ok, detail = '') => results.push({ label, ok, detail })
 
 check('bundle registers with the loader', loaded !== null)
 check('bundle id', loaded?.id === 'dsh-model-label', String(loaded?.id))
+check(
+  'no Harness Client package is loaded as a module (official practices)',
+  !/require\(\s*['"]@deepseek-ai\//.test(source),
+)
 check('exports.name', exportsObj.name === 'dsh-model-label', String(exportsObj.name))
 check(
   'exports.inject declares slots + locale',
@@ -206,6 +202,12 @@ check(
   String(registered?.meta?.priority),
 )
 check('register meta.locale', registered?.meta?.locale === 'dsh-model-label', String(registered?.meta?.locale))
+check(
+  'the registration declares the official label child slot',
+  JSON.stringify(registered?.meta?.children) ===
+    JSON.stringify({ 'conversation.input.model.label': { kind: 'single', scope: 'session', inline: true } }),
+  JSON.stringify(registered?.meta?.children),
+)
 check('register supplies an inject face', typeof registered?.meta?.inject === 'function')
 check('register supplies a component', typeof registered?.component === 'function')
 
@@ -257,7 +259,7 @@ const texts = collectText(rendered)
 // The deliverable: DISPLAY names, not ids.
 const triggerNode = findNode(rendered, n => n.props?.className === 'dml_trigger')[0]
 const triggerText = collectText(triggerNode).join('')
-check('trigger shows {providerName}/{modelName}', texts.includes('DeepSeek/DeepSeek V4.1 Flash'), texts.join(' | '))
+check('trigger shows {providerName}/{modelName}', texts.join('').includes('DeepSeek/DeepSeek V4.1 Flash'), texts.join(' | '))
 check('trigger shows the effort name', texts.includes('High'), texts.join(' | '))
 check('trigger omits the provider id', !texts.includes('deepseek-official/deepseek-v4.1-flash'), texts.join(' | '))
 check(
@@ -265,6 +267,49 @@ check(
   triggerText.includes('DeepSeek/DeepSeek V4.1 Flash'),
   triggerText,
 )
+
+// ── the official label child slot ────────────────────────────────────────────
+// The registration declares `conversation.input.model.label`, so the slot
+// runtime binds `renderSlot` into the component. Every model label — trigger,
+// root-pane cell, rows — must route through it with the same owner props the
+// shipped seat passes, so official label decorations (the 1017 badge today)
+// keep working inside this shadowing seat.
+{
+  const slotCalls = []
+  const slotProps = {
+    locked: false,
+    t: key => key,
+    ...face,
+    renderSlot: (key, owner, opts) => {
+      slotCalls.push({ key, owner, fallback: opts?.fallback })
+      return owner.model.name
+    },
+  }
+  const slotRendered = registered.component(slotProps)
+  const slotTrigger = findNode(slotRendered, n => n.props?.className === 'dml_trigger')[0]
+  check('renderSlot is invoked for the trigger label', slotCalls.length >= 1, `calls=${slotCalls.length}`)
+  check(
+    'the label slot key is the official child slot',
+    slotCalls[0]?.key === 'conversation.input.model.label',
+    String(slotCalls[0]?.key),
+  )
+  check(
+    'the label slot receives the shipped owner props',
+    slotCalls[0]?.owner?.placement === 'trigger' &&
+      slotCalls[0]?.owner?.provider?.id === 'deepseek-official' &&
+      slotCalls[0]?.owner?.provider?.name === 'DeepSeek' &&
+      slotCalls[0]?.owner?.model?.id === 'deepseek-v4.1-flash' &&
+      slotCalls[0]?.owner?.model?.name === 'DeepSeek V4.1 Flash' &&
+      slotCalls[0]?.owner?.selected === true &&
+      slotCalls[0]?.fallback === 'DeepSeek V4.1 Flash',
+    JSON.stringify(slotCalls[0]),
+  )
+  check(
+    'the trigger still reads provider/model through the slot',
+    collectText(slotTrigger).join('').includes('DeepSeek/DeepSeek V4.1 Flash'),
+    collectText(slotTrigger).join(''),
+  )
+}
 
 // ── the id fallback: a saved selection with no catalog entry left ────────────
 // When the provider or model is gone from the catalog, the ids are the only

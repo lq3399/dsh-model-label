@@ -76,6 +76,24 @@ occupants:
 
 官方包一行都不用改，升级 DSH 也不会冲突。
 
+### 模型名统一走官方标签子槽位
+
+当前版本的官方座位把**每一个模型名**都经由专用子槽位 `conversation.input.model.label`
+渲染（`single`、inline、session 域），并向它传 `{provider, model, placement, selected}`，
+无占用时回落到目录名。官方自己的「1017 发布徽章」包就注册在这个槽位里。
+
+本插件的注册声明了**一模一样**的 `children` 规格——这是 `renderSlot`
+被绑定进组件的前提——并把触发器、根面板 Model 格、模型行三处的模型名
+全部经它渲染：
+
+- 有官方占用时（如 1017 徽章），官方装饰照常出现在本插件的界面里，
+  不会被遮蔽丢掉；
+- 无官方占用时，槽位回落到目录名，与插件自己渲染完全同文。
+
+placement 与官方一致：触发器传 `trigger`，根面板 Model 格传 `menu`，
+模型行传 `option`；`provider` 是已本地化的 `{id, name}`，与官方座位
+传给该槽位的形状相同。
+
 ### 为什么没有复用原版的 `MenuGroup`
 
 原版的供应商分组用的是 primitives 的 `MenuGroup`，但它不适合做折叠树：
@@ -190,45 +208,55 @@ dsh plugin --profile desktop add "link:/path/to/dsh-plugins/dsh-model-label"
 
 ## 依赖
 
-只依赖 shell 已提供的静态模块：`react`、`react-dom`、
-`@deepseek-ai/dsh-client-ui-primitives`（这三个都在 web 前端的
+只依赖 shell 已提供的静态模块：`react`、`react-dom`（两者都在 web 前端的
 `PLATFORM_MODULES` 种子里）。不需要构建步骤，也不需要 `dsh.client.external`。
+
+按官方插件实践，**不把任何 Harness Client 包当模块加载**
+（不 `require('@deepseek-ai/…')`）——这类包的内部随时可能变动。原版从
+`dsh-client-ui-primitives` 借用的几个控件全部自持：图标、忙碌圆点、菜单
+表面、搜索输入框、锚定 toast、模糊排序 `rankByName`，样式只用
+`--dsw-*` 主题变量，类名收在 `dml_` 前缀下。跟随宿主主题切换，
+不随 primitives 重构而坏。
 
 ## 验证
 
 ```bash
 npm install            # 只为测试装 jsdom / react / react-dom，插件本身零依赖
-npm test               # 全部检查（37 + 冷启动 + 20）
+npm test               # 全部检查（43 + 冷启动 + 23）
 
 # 也可以单独跑
-node _headless-check.cjs      # 37 项：注册、priority、显示名与 id 回退、树的折叠
+node _headless-check.cjs      # 43 项：注册、priority、官方标签槽、显示名与 id 回退、树的折叠
 node _coldstart-check.cjs     # 冷启动依赖：inject 必须含 remote.session
-node _render-check.cjs        # 20 项：真实 React + jsdom 点击驱动
+node _render-check.cjs        # 23 项：真实 React + jsdom 点击驱动
 ```
 
 `_headless-check.cjs` 覆盖：bundle 注册、`inject` 声明、`ctx.inject` 服务依赖、
-只注册一个 slot、priority 为负（确保赢得 single cell）、组件可渲染、
-触发器显示 `{供应商名}/{模型名}`、不出现 id、目录项缺失时回退到 id
-且绝不渲染 `undefined`，以及树的折叠语义（默认只展开选中供应商、折叠的行不产生
-模型行、开合互相独立、点击模型仍正确上报 provider/model）。
+只注册一个 slot、priority 为负（确保赢得 single cell）、`children` 里的官方
+标签槽声明、`renderSlot` 调用契约（key/owner 形状/回落名）、不加载任何
+Harness Client 包、组件可渲染、触发器显示 `{供应商名}/{模型名}`、不出现 id、
+目录项缺失时回退到 id 且绝不渲染 `undefined`，以及树的折叠语义（默认只展开
+选中供应商、折叠的行不产生模型行、开合互相独立、点击模型仍正确上报
+provider/model）。
 
 它的 React 桩是**有状态的**（`useState`/`useRef` 保留槽位、setter 触发重渲染），
 所以能真正驱动折叠状态变化，而不是只观察首次渲染。
 
 `_coldstart-check.cjs` 专门守住上面那个「重启后失效」的坑：断言 `inject` 里
 确实有 `remote` / `remote.session`，并与官方 `ui-model-selection` 的必需项
-逐项比对，同时检查没有残留的临时诊断代码。
+逐项比对，同时守着官方标签槽声明与「零 Harness Client 模块加载」两条
+官方规范，并检查没有残留的临时诊断代码。
 
 `_render-check.cjs` 用真实 React + jsdom 挂载组件并派发真实 DOM 事件，
 验证只有选中供应商默认展开、展开第二个不会收起第一个、点击折叠、搜索展开命中项、
-点击模型真的以正确的 provider/model 调用了共享目录，以及**开合不产生任何滚动**
+点击模型真的以正确的 provider/model 调用了共享目录、触发器/Model 格/模型行
+三处都经官方标签槽渲染，以及**开合不产生任何滚动**
 （记录 `scrollIntoView` 调用数；这条正是「开合后滚动条弹回顶部」的回归测试）。
 
 ## 文件
 
 | 文件 | 作用 |
 |---|---|
-| `client.js` | 浏览器半身：遮蔽模型位，渲染 `{供应商名}/{模型名} · {effort}`，模型面板为按供应商折叠的树 |
+| `client.js` | 浏览器半身：遮蔽模型位，渲染 `{供应商名}/{模型名} · {effort}`，模型面板为按供应商折叠的树；模型名统一经官方标签子槽位渲染，primitives 控件自持 |
 | `index.js` | Host 半身：空实现（浏览器半身必须挂在同名 Loader 行上） |
 | `cordis.patch.yml` | bundle patch：插入一行挂载 Host 半身 |
 | `_headless-check.cjs` | 无头验证脚本（注册、标签、树的折叠语义） |

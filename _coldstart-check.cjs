@@ -76,7 +76,26 @@ if (typeof shipped === 'string' && shipped !== '' && fs.existsSync(shipped)) {
   ok.push('(shipped package not extracted; comparison skipped)')
 }
 
-// ── 4. no leftover diagnostic scaffolding ────────────────────────────────────
+// ── 4. the official label child slot stays declared ─────────────────────────
+// The registration declares `conversation.input.model.label` with the exact
+// spec the shipped seat uses; that declaration is what binds `renderSlot` and
+// keeps official label decorations working inside this seat.
+if (!/children:\s*\{\s*['"]conversation\.input\.model\.label['"]/.test(source)) {
+  problems.push("the registration no longer declares the official 'conversation.input.model.label' child slot")
+} else {
+  ok.push("declares the official 'conversation.input.model.label' child slot")
+}
+
+// ── 5. no Harness Client package is loaded as a module ──────────────────────
+// Harness plugin practices: never require('@deepseek-ai/…') from a plugin
+// client half — the controls are self-hosted instead.
+if (/require\(\s*['"]@deepseek-ai\//.test(source)) {
+  problems.push('the bundle loads a Harness Client package as a module (forbidden by the plugin practices)')
+} else {
+  ok.push('loads no Harness Client package as a module')
+}
+
+// ── 6. no leftover diagnostic scaffolding ────────────────────────────────────
 for (const stray of ['dsh-model-label-diagnostic', 'cold-probe', 'model-label-probe', 'sessionStorage.setItem']) {
   if (source.includes(stray)) problems.push(`leftover diagnostic scaffolding: ${stray}`)
 }

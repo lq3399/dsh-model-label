@@ -74,37 +74,24 @@ const React = require(resolveModule('react'))
 const ReactDOM = require(resolveModule('react-dom/client'))
 const { act } = require(resolveModule('react'))
 
-// ── stub the platform primitives the bundle requires ────────────────────────
-const primitives = new Proxy(
-  {
-    rankByName: (items, rawQuery) => {
-      const q = String(rawQuery).toLowerCase()
-      if (q === '') return items
-      return items.filter(item => item.name.toLowerCase().includes(q))
-    },
-    // A real input so the search box can actually be typed into.
-    Input: React.forwardRef(function Input(props, ref) {
-      return React.createElement('input', { ...props, ref })
-    }),
-  },
-  {
-    get: (target, prop) => {
-      if (prop in target) return target[prop]
-      // Icon / layout stubs: render a marker element carrying the props through.
-      // forwardRef because the seat refs MenuSurface and Input.
-      return React.forwardRef(function Stub(props, ref) {
-        const { children, ...rest } = props ?? {}
-        return React.createElement('span', { ref, 'data-stub': String(prop), ...rest }, children ?? null)
-      })
-    },
-  },
-)
+// The refactor self-hosts every control the stock seat borrowed from
+// `dsh-client-ui-primitives`, so the platform table is react/react-dom only —
+// and the require stub FAILS if the bundle ever reaches for `@deepseek-ai/*`
+// again.
+
+// A stand-in for the official `conversation.input.model.label` occupant (the
+// 1017 badge ships there): it marks every label the seat routes through the
+// slot so the checks can see the official decoration surface light up.
+const officialLabelSlots = []
+const officialLabel = (key, owner, opts) => {
+  officialLabelSlots.push({ key, placement: owner.placement, provider: owner.provider, model: owner.model })
+  return React.createElement('span', { 'data-official-label': owner.placement }, opts?.fallback ?? owner.model?.name)
+}
 
 const platformModules = {
   react: React,
   'react/jsx-runtime': { jsx: React.createElement, jsxs: React.createElement, Fragment: React.Fragment },
   'react-dom': require(resolveModule('react-dom')),
-  '@deepseek-ai/dsh-client-ui-primitives': primitives,
 }
 
 // ── load the bundle exactly as the ModuleLoader would ───────────────────────
@@ -202,13 +189,14 @@ const DICT = (() => {
   return new Function(`${match[0]}\nreturn DICT`)().zh
 })()
 const face = registered.meta.inject('session-1')
+const seatProps = { locked: false, t, renderSlot: officialLabel, ...face }
 
 // ── mount ───────────────────────────────────────────────────────────────────
 const host = document.getElementById('host')
 let root = null
 act(() => {
   root = ReactDOM.createRoot(host)
-  root.render(React.createElement(registered.component, { locked: false, t, ...face }))
+  root.render(React.createElement(registered.component, seatProps))
 })
 
 const results = []
@@ -241,8 +229,26 @@ const openModelPane = () => {
 }
 
 check('trigger renders the provider-qualified label', trigger().textContent.includes('火山方舟/GLM 5.3'), trigger().textContent)
-openModelPane()
+check(
+  'the trigger label routes through the official label slot',
+  document.querySelector('.dml_trigger [data-official-label="trigger"]') !== null,
+)
+// The menu opens on the ROOT pane (a selection is saved); assert the Model
+// cell's slot routing BEFORE drilling into the model pane, which unmounts it.
+click(trigger())
+check(
+  'the Model cell routes through the official label slot',
+  [...document.querySelectorAll('.dml_cell [data-official-label="menu"]')].length === 1,
+)
+const modelCell = [...document.querySelectorAll('.dml_cell')].find(n => n.textContent.includes(DICT['menu.model']))
+if (modelCell !== undefined && modelCell !== null) click(modelCell)
 check('menu opens on the model pane', menu() !== null && providerToggles().length > 0)
+check(
+  'every visible model row routes through the official label slot',
+  document.querySelectorAll('.dml_modelRow [data-official-label="option"]').length === modelRows().length &&
+    modelRows().length > 0,
+  `rows=${modelRows().length}`,
+)
 
 // ── default fold state ──────────────────────────────────────────────────────
 check(
@@ -315,7 +321,7 @@ check(
   })
   act(() => {
     root = ReactDOM.createRoot(host)
-    root.render(React.createElement(registered.component, { locked: false, t, ...face }))
+    root.render(React.createElement(registered.component, seatProps))
   })
   openModelPane()
   takeScrollCalls()
@@ -364,10 +370,10 @@ act(() => {
 })
 act(() => {
   root = ReactDOM.createRoot(host)
-  root.render(React.createElement(registered.component, { locked: false, t, ...face }))
+  root.render(React.createElement(registered.component, seatProps))
 })
 openModelPane()
-const search = document.querySelector('.dml_search input') ?? document.querySelector('.dml_search')
+const search = document.querySelector('.dml_search')
 check('search box is present', search !== null)
 takeScrollCalls()
 act(() => {

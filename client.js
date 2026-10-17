@@ -14,6 +14,15 @@
  * out) — the user still needs to see what is saved, and the id is then the only
  * name that exists.
  *
+ * Every model NAME is additionally routed through the official
+ * `conversation.input.model.label` child slot (declared on our registration
+ * exactly as the shipped seat declares it). That slot is the harness's
+ * sanctioned extension point for non-interactive label decoration, so official
+ * label decorations — the temporary 1017 release badge today, whatever ships
+ * there tomorrow — keep working inside this shadowing seat. With no occupant
+ * the slot renders our fallback (the plain catalog name), which reads
+ * identically to the old self-rendered label.
+ *
  * The model pane is a COLLAPSIBLE TREE folded by provider: one toggle row per
  * provider, its models nested underneath, and only the provider that owns the
  * current selection open by default. A provider the user opens or closes keeps
@@ -26,7 +35,13 @@
  * shared per-session ModelDirectory both the seat and `/model` write through.
  *
  * Hand-written ModuleLoader bundle: no build step, and no dependency beyond the
- * `react`/`react-dom` and `@deepseek-ai/*` modules the shell already provides.
+ * `react`/`react-dom` modules the shell already provides. Per the harness
+ * plugin practices, NO Harness Client package (primitives included) is loaded
+ * as a module: the few controls the stock seat borrows from
+ * `@deepseek-ai/dsh-client-ui-primitives` are self-hosted below with the same
+ * markup shape, theme tokens only, and classes renamed under this plugin's
+ * prefix — icons, the busy dot, the menu surface, the search input, the
+ * anchored toast, and the fuzzy `rankByName`.
  */
 
 window.__ModuleLoader__.load({
@@ -39,21 +54,6 @@ window.__ModuleLoader__.load({
     const { useState, useEffect, useMemo, useRef, useCallback } = React
     const { createElement: h, Fragment } = React
     const { createPortal } = require('react-dom')
-    const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
-
-    const {
-      MenuSurface,
-      StateDot,
-      Toast,
-      Input,
-      IconDataOutlineRegular,
-      IconChevronDownOutlineRegular,
-      IconChevronRightOutlineRegular,
-      IconCheckOutlineRegular,
-      IconWarningOutlineRegular,
-      IconCloseFillRegular: IconCloseFill,
-      rankByName,
-    } = primitives
 
     const clsx = (...parts) => parts.filter(Boolean).join(' ')
 
@@ -114,6 +114,14 @@ window.__ModuleLoader__.load({
       },
     }
 
+    // ── self-hosted controls (no Harness Client package is loaded as a module) ─
+    //
+    // The stock seat borrows these from `dsh-client-ui-primitives`. Per the
+    // harness plugin practices they are reimplemented here: markup and behavior
+    // copied from the host controls, classes renamed under the `dml_` prefix,
+    // and only `--dsw-*` theme tokens shared — a renamed or reworked primitive
+    // can then never break this seat, and a theme switch still follows.
+
     // Styles reuse the stock seat's own class names where they are global, and
     // otherwise carry our own scoped prefix. Colour comes from theme variables so
     // the seat follows a scheme switch.
@@ -135,14 +143,16 @@ window.__ModuleLoader__.load({
 .dml_triggerLabel,.dml_triggerEffort{display:var(--dsh-composer-model-text-display,block)}
 .dml_chevron{color:var(--dsw-alias-label-caption);flex:none;transition:transform .12s}
 .dml_chevronOpen{transform:rotate(180deg)}
-.dml_menu{z-index:1100;--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(240px,100vw - 32px);max-width:min(420px,100vw - 32px);max-height:min(360px,100vh - 96px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);border:0;flex-direction:column;padding:4px;display:flex;position:fixed;overflow:hidden}
+.dml_menu{z-index:1100;--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(240px,100vw - 32px);max-width:min(420px,100vw - 32px);max-height:min(360px,100vh - 96px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-overlay);border-radius:var(--dsw-radius-md);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);border:0;flex-direction:column;padding:4px;display:flex;position:fixed;overflow:hidden}
 .dml_status,.dml_empty{color:var(--dsw-alias-label-tertiary);padding:8px;font-size:12px;line-height:18px}
 .dml_error,.dml_warning{border-radius:var(--dsw-radius-md);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;font-size:12px;line-height:18px;display:flex}
 .dml_warning{background:var(--dsw-alias-interactive-bg-hover-warning,#3a3320);color:var(--dsw-alias-state-warning-primary,#f0a441)}
 .dml_retry{color:inherit;cursor:pointer;background:0 0;border:0;font:inherit;text-decoration:underline;padding:0}
 .dml_groups{flex-direction:column;display:flex;padding:2px;overflow-y:auto}
 .dml_searchRow{padding:4px 4px 6px;display:flex;position:relative;align-items:center}
-.dml_search{width:100%}
+.dml_search{flex:1;min-width:0;height:26px;border-radius:var(--dsw-radius-sm);border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);padding:0 26px 0 8px;font:inherit;font-size:13px;line-height:20px;outline:none}
+.dml_search::placeholder{color:var(--dsw-alias-label-dimmed)}
+.dml_search:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));border-color:transparent}
 .dml_searchClear{position:absolute;right:8px;color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:0;padding:0;display:flex}
 .dml_cell,.dml_option,.dml_providerToggle{box-sizing:border-box;width:100%;color:var(--dsw-alias-label-primary);text-align:left;cursor:pointer;background:0 0;border:0;border-radius:var(--dsw-radius-sm);align-items:center;gap:8px;padding:6px 8px;font:inherit;font-size:13px;line-height:20px;display:flex}
 .dml_cell:hover:not(:disabled),.dml_option:hover:not(:disabled),.dml_optionActive{background:var(--dsw-alias-interactive-bg-hover)}
@@ -163,7 +173,143 @@ window.__ModuleLoader__.load({
 .dml_providerMeta{color:var(--dsw-alias-label-caption);flex:none;margin-left:auto;font-size:11px}
 .dml_models{border-left:1px solid var(--dsw-alias-border-l1);flex-direction:column;margin-left:9px;display:flex}
 .dml_models .dml_option{padding-left:13px}
+.dml_dot{width:12px;height:12px;flex:none;border-radius:50%;border:1.5px solid var(--dsw-alias-state-business-primary,var(--dsw-alias-brand-primary));border-top-color:transparent;animation:dml_spin .8s linear infinite}
+@keyframes dml_spin{to{transform:rotate(360deg)}}
+.dml_toast{transform:translate(-50%,-100%);position:fixed;z-index:1200;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);font-size:12px;line-height:18px;max-width:min(420px,100vw - 32px);display:flex;transition:opacity .2s,transform .2s}
+.dml_toastLeave{opacity:0;transform:translate(-50%,calc(-100% + 4px))}
+.dml_toastIcon{color:var(--dsw-alias-state-error-primary);flex:none;display:flex}
+.dml_toastText{min-width:0}
 `
+
+    // 16px stroke icons on the currentColor, matching the host's outline icon
+    // language. The trigger icon stays hidden by default through the same
+    // `--dsh-composer-model-icon-display` variable the stock seat uses.
+    const IconBase = ({ size = 16, className, children, ...rest }) =>
+      h(
+        'svg',
+        {
+          viewBox: '0 0 16 16',
+          width: size,
+          height: size,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.5,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          className,
+          ...rest,
+        },
+        children,
+      )
+    const IconData = props =>
+      h(
+        IconBase,
+        props,
+        h('ellipse', { cx: 8, cy: 4.4, rx: 5, ry: 1.9 }),
+        h('path', { d: 'M3 4.4v7.2c0 1.05 2.24 1.9 5 1.9s5-.85 5-1.9V4.4' }),
+        h('path', { d: 'M3 8c0 1.05 2.24 1.9 5 1.9S13 9.05 13 8' }),
+      )
+    const IconChevronDown = props => h(IconBase, props, h('path', { d: 'M4 6.2 8 10.2 12 6.2' }))
+    const IconChevronRight = props => h(IconBase, props, h('path', { d: 'M6.2 4 10.2 8 6.2 12' }))
+    const IconCheck = props => h(IconBase, props, h('path', { d: 'M3.4 8.6 6.5 11.6 12.6 4.9' }))
+    const IconWarning = props =>
+      h(
+        IconBase,
+        props,
+        h('path', { d: 'M8 2.7 14.3 13.3H1.7Z' }),
+        h('path', { d: 'M8 6.6v3' }),
+        h('path', { d: 'M8 11.4h.01' }),
+      )
+    const IconClose = props => h(IconBase, props, h('path', { d: 'M4.5 4.5 11.5 11.5' }), h('path', { d: 'M11.5 4.5 4.5 11.5' }))
+
+    /** The stock `StateDot`'s ongoing state: a small spinning ring. */
+    const BusyDot = () => h('span', { className: 'dml_dot' })
+
+    const TOAST_TTL = 4000
+    const TOAST_LEAVE = 200
+
+    /**
+     * The stock `Toast`: a transient message floated above the anchor (the
+     * composer card), auto-dismissed after a few seconds with a short fade.
+     * `anchor` is a DOM element or null; null centers on the viewport top.
+     * @param text - the message.
+     * @param icon - the leading icon element.
+     * @param anchor - element to hover above, or null.
+     * @param onDone - called after the leave transition finished.
+     */
+    function ComposerToast({ text, icon, anchor, onDone }) {
+      const [leaving, setLeaving] = useState(false)
+      const [pos, setPos] = useState(null)
+      useEffect(() => {
+        const hide = setTimeout(() => setLeaving(true), TOAST_TTL)
+        return () => clearTimeout(hide)
+      }, [])
+      useEffect(() => {
+        if (!leaving) return undefined
+        const done = setTimeout(onDone, TOAST_LEAVE)
+        return () => clearTimeout(done)
+      }, [leaving, onDone])
+      React.useLayoutEffect(() => {
+        if (anchor === null || anchor === undefined || typeof anchor.getBoundingClientRect !== 'function') {
+          setPos(null)
+          return undefined
+        }
+        const place = () => {
+          const rect = anchor.getBoundingClientRect()
+          setPos({ left: rect.left + rect.width / 2, top: rect.top - 8 })
+        }
+        place()
+        window.addEventListener('resize', place)
+        return () => window.removeEventListener('resize', place)
+      }, [anchor])
+      return createPortal(
+        h(
+          'div',
+          {
+            className: clsx('dml_toast', leaving && 'dml_toastLeave'),
+            style: pos === null ? { visibility: 'hidden', left: 0, top: 0 } : { left: pos.left, top: pos.top },
+            role: 'status',
+          },
+          h('span', { className: 'dml_toastIcon' }, icon),
+          h('span', { className: 'dml_toastText' }, text),
+        ),
+        document.body,
+      )
+    }
+
+    // ── fuzzy ranking (self-hosted `rankByName`) ───────────────────────────────
+    //
+    // Same contract as the stock ranking: case-insensitive ordered subsequence
+    // over the model name, ranked by prefix, alignment score, then catalog
+    // order. With an empty query the catalog order is returned as-is.
+    const WORD_BREAK = /[\s\-_/·.()]/
+    function fuzzyScore(name, query) {
+      const haystack = name.toLowerCase()
+      let hit = 0
+      let score = 0
+      let previous = -2
+      for (let at = 0; at < haystack.length && hit < query.length; at++) {
+        if (haystack[at] !== query[hit]) continue
+        if (at === previous + 1) score += 3 // contiguous run
+        if (at === 0 || WORD_BREAK.test(haystack[at - 1])) score += 2 // word start
+        if (hit === 0) score += at === 0 ? 4 : 1 // full-string prefix
+        previous = at
+        hit += 1
+      }
+      return hit === query.length ? score : -1
+    }
+    function rankByName(models, rawQuery) {
+      const query = rawQuery.trim().toLowerCase()
+      if (query === '') return [...models]
+      const ranked = []
+      for (let index = 0; index < models.length; index++) {
+        const score = fuzzyScore(models[index].name, query)
+        if (score >= 0) ranked.push({ model: models[index], index, score })
+      }
+      ranked.sort((left, right) => right.score - left.score || left.index - right.index)
+      return ranked.map(entry => entry.model)
+    }
 
     // ── provider order (same rule as the stock seat) ───────────────────────────
     function orderModelProviders(groups) {
@@ -178,11 +324,12 @@ window.__ModuleLoader__.load({
      *
      * `sessionId`, `available`, `directory`, `load`, and `select` arrive from this
      * entry's `inject` face (the same shared per-session store `/model` writes
-     * through); `locked` is the owner's render-call prop; `t` is the entry's
-     * locale seat.
+     * through); `locked` is the owner's render-call prop; `renderSlot` is bound by
+     * the slot runtime because this registration declares the official
+     * `conversation.input.model.label` child slot; `t` is the entry's locale seat.
      */
     function ModelLabelSeat(props) {
-      const { locked, available, directory: store, t } = props
+      const { locked, available, directory: store, t, renderSlot } = props
 
       const state = React.useSyncExternalStore(
         useCallback(fn => store.subscribe(fn), [store]),
@@ -246,6 +393,38 @@ window.__ModuleLoader__.load({
       const providerName = useCallback(
         group => (group.id === 'deepseek-account' ? t('provider.account') : group.name),
         [t],
+      )
+
+      // ── the official label child slot ───────────────────────────────────────
+      //
+      // The registration declares `conversation.input.model.label` exactly as the
+      // shipped seat does, so the slot runtime binds `renderSlot` into this
+      // component. Routing every model name through it keeps the official label
+      // decorations (the 1017 release badge today) working inside this seat;
+      // with no occupant the outlet renders our fallback, the plain catalog
+      // name — identical to the old self-rendered label.
+      const labelInner = useCallback(
+        (group, model, placement, selected) => {
+          if (typeof renderSlot !== 'function') return model.name
+          return renderSlot(
+            'conversation.input.model.label',
+            {
+              provider: { id: group.id, name: providerName(group) },
+              model: { id: model.id, name: model.name },
+              placement,
+              selected,
+            },
+            { fallback: model.name },
+          )
+        },
+        [renderSlot, providerName],
+      )
+
+      /** The provider-qualified trigger/cell label: `{providerName}/{labelSlot}`. */
+      const qualifiedLabel = useCallback(
+        (group, model, placement, selected) =>
+          h(Fragment, null, `${providerName(group)}/`, labelInner(group, model, placement, selected)),
+        [providerName, labelInner],
       )
 
       // ── the folded tree ─────────────────────────────────────────────────────
@@ -528,14 +707,13 @@ window.__ModuleLoader__.load({
        *
        * @param providerId - provider id from the directory.
        * @param modelId - provider-owned model id.
-       * @returns the label fragment.
+       * @returns the label fragment as plain text (for titles and aria).
        */
       const spell = (providerId, modelId) => {
         const group = groups.find(candidate => candidate.id === providerId)
         const model = group?.models.find(candidate => candidate.id === modelId)
         if (group === undefined || model === undefined) return `${providerId}/${modelId}`
-        const providerLabel = providerId === 'deepseek-account' ? t('provider.account') : group.name
-        return `${providerLabel}/${model.name}`
+        return `${providerName(group)}/${model.name}`
       }
 
       const selectionLabel =
@@ -686,17 +864,23 @@ window.__ModuleLoader__.load({
               else show()
             },
           },
-          h(IconDataOutlineRegular, { className: 'dml_triggerIcon', size: 16 }),
-          h('span', { className: 'dml_triggerLabel' }, selectionLabel),
+          h(IconData, { className: 'dml_triggerIcon', size: 16 }),
+          h(
+            'span',
+            { className: 'dml_triggerLabel' },
+            currentChoice === undefined
+              ? selectionLabel
+              : qualifiedLabel(currentChoice.group, currentChoice.model, 'trigger', true),
+          ),
           effortLabel !== undefined && h('span', { className: 'dml_triggerEffort' }, effortLabel),
           busy
-            ? h(StateDot, { state: 'ongoing' })
-            : h(IconChevronDownOutlineRegular, { className: clsx('dml_chevron', open && 'dml_chevronOpen') }),
+            ? h(BusyDot, null)
+            : h(IconChevronDown, { className: clsx('dml_chevron', open && 'dml_chevronOpen') }),
         ),
         open &&
           createPortal(
             h(
-              MenuSurface,
+              'div',
               {
                 ref: menuRef,
                 id: `${id}-menu`,
@@ -720,8 +904,14 @@ window.__ModuleLoader__.load({
                       onClick: () => drill('model'),
                     },
                     h('span', { className: 'dml_cellLabel' }, t('menu.model')),
-                    h('span', { className: 'dml_cellValue' }, selectionLabel),
-                    h(IconChevronRightOutlineRegular, { className: 'dml_cellChevron' }),
+                    h(
+                      'span',
+                      { className: 'dml_cellValue' },
+                      currentChoice === undefined
+                        ? selectionLabel
+                        : qualifiedLabel(currentChoice.group, currentChoice.model, 'menu', true),
+                    ),
+                    h(IconChevronRight, { className: 'dml_cellChevron' }),
                   ),
                   reasoning !== undefined &&
                     h(
@@ -735,7 +925,7 @@ window.__ModuleLoader__.load({
                       },
                       h('span', { className: 'dml_cellLabel' }, t('menu.effort')),
                       h('span', { className: 'dml_cellValue' }, effortLabel),
-                      h(IconChevronRightOutlineRegular, { className: 'dml_cellChevron' }),
+                      h(IconChevronRight, { className: 'dml_cellChevron' }),
                     ),
                 ),
               pane === 'model' &&
@@ -746,7 +936,7 @@ window.__ModuleLoader__.load({
                     h(
                       'div',
                       { className: 'dml_searchRow' },
-                      h(Input, {
+                      h('input', {
                         ref: searchRef,
                         className: 'dml_search',
                         type: 'text',
@@ -775,7 +965,7 @@ window.__ModuleLoader__.load({
                               searchRef.current?.focus()
                             },
                           },
-                          h(IconCloseFill, {}),
+                          h(IconClose, {}),
                         ),
                     ),
                   state.status === 'loading' && h('div', { className: 'dml_status' }, t('status.loading')),
@@ -832,7 +1022,7 @@ window.__ModuleLoader__.load({
                             'aria-label': t(expanded ? 'provider.collapse' : 'provider.expand', { name }),
                             onClick: () => toggleProvider(group.id),
                           },
-                          h(IconChevronRightOutlineRegular, { className: 'dml_providerCaret', size: 12 }),
+                          h(IconChevronRight, { className: 'dml_providerCaret', size: 12 }),
                           h('span', { className: 'dml_providerName' }, name),
                           h(
                             'span',
@@ -880,15 +1070,19 @@ window.__ModuleLoader__.load({
                                 h(
                                   'span',
                                   { className: 'dml_optionCopy' },
-                                  h('span', { className: 'dml_modelName' }, model.name),
+                                  h(
+                                    'span',
+                                    { className: 'dml_modelName' },
+                                    labelInner(group, model, 'option', selected),
+                                  ),
                                 ),
                                 h(
                                   'span',
                                   { className: 'dml_check' },
                                   pending?.provider === group.id && pending.model === model.id
-                                    ? h(StateDot, { state: 'ongoing' })
+                                    ? h(BusyDot, null)
                                     : selected
-                                      ? h(IconCheckOutlineRegular, {})
+                                      ? h(IconCheck, {})
                                       : null,
                                 ),
                               )
@@ -943,9 +1137,9 @@ window.__ModuleLoader__.load({
                               pending.provider === state.current?.provider &&
                               pending.model === state.current.model &&
                               pending.reasoningEffort === level.effort
-                              ? h(StateDot, { state: 'ongoing' })
+                              ? h(BusyDot, null)
                               : effectiveEffort === level.effort
-                                ? h(IconCheckOutlineRegular, {})
+                                ? h(IconCheck, {})
                                 : null,
                           ),
                         ),
@@ -955,10 +1149,10 @@ window.__ModuleLoader__.load({
             document.body,
           ),
         toast !== null &&
-          h(Toast, {
+          h(ComposerToast, {
             key: toast.seq,
             text: toast.text,
-            icon: h(IconWarningOutlineRegular, {}),
+            icon: h(IconWarning, {}),
             anchor: rootRef.current?.closest('[data-composer-card]') ?? null,
             onDone: () => setToast(null),
           }),
@@ -1000,6 +1194,11 @@ window.__ModuleLoader__.load({
       // `locale: NS` gives the component its `t` seat; the inject face hands it
       // the same shared store `/model` writes through, so the two surfaces can
       // never disagree.
+      //
+      // `children` declares the official `conversation.input.model.label` child
+      // slot with the exact spec the shipped seat declares. The declaration is
+      // what binds `renderSlot` into the component, and the slot itself is the
+      // sanctioned extension point official label decorations register into.
       ctx.inject(['slots', 'modelDirectories', 'sessions', 'remote', 'remote.session'], scope => {
         const models = scope.modelDirectories
         const sessions = scope.sessions
@@ -1009,6 +1208,7 @@ window.__ModuleLoader__.load({
               name: 'conversation.input.model',
               priority: -100,
               locale: NS,
+              children: { 'conversation.input.model.label': { kind: 'single', scope: 'session', inline: true } },
               inject: sessionId => {
                 const available = sessions.subagentAddress(sessionId) === undefined
                 const directory = models.directoryFor(sessionId)
