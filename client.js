@@ -340,11 +340,22 @@ window.__ModuleLoader__.load({
       const [pane, setPane] = useState('root')
       const [query, setQuery] = useState('')
       const [highlightedKey, setHighlightedKey] = useState(null)
-      // Only EXPLICIT folds live here: `providerId -> expanded`. A provider with
-      // no entry follows the selection, so the tree needs no effect to stay in
-      // step with a selection that changes elsewhere (the `/model` dialog, a
-      // session switch, a catalog reload).
+      // Only EXPLICIT folds made while BROWSING live here: `providerId ->
+      // expanded`. A provider with no entry follows the selection, so the tree
+      // needs no effect to stay in step with a selection that changes elsewhere
+      // (the `/model` dialog, a session switch, a catalog reload). A SEARCH
+      // never reads or writes this map — search-time collapses are tracked
+      // separately below — so leaving a search restores exactly the pre-search
+      // browsing state.
       const [expandedOverrides, setExpandedOverrides] = useState(() => new Map())
+      // Providers the user folded away DURING the current search: a Set, not a
+      // Map, because the search default is OPEN — only the exceptions need
+      // recording. Reset on every fresh search (see the rising-edge guard next
+      // to `searching`), so a search-session fold never leaks into browsing.
+      const [collapsedInSearch, setCollapsedInSearch] = useState(() => new Set())
+      // Whether the PREVIOUS render was searching: the rising-edge detector that
+      // knows this render begins a fresh search session.
+      const previousSearching = useRef(false)
       const [selectionFocus, setSelectionFocus] = useState(false)
       const [toast, setToast] = useState(null)
       const toastSeq = useRef(0)
@@ -399,6 +410,16 @@ window.__ModuleLoader__.load({
       // these same two values).
       const trimmedQuery = query.trim()
       const searching = showSearch && trimmedQuery !== ''
+      // A FRESH search — the transition from not-searching to searching, whether
+      // the query was typed, pasted, or simply left over from a closed menu —
+      // starts with every provider unfolded: the collapses recorded during the
+      // previous search session belonged to that search, not to this one.
+      // Clearing here (rather than in an effect) means the very render that
+      // begins the search already sees an empty set.
+      if (searching !== previousSearching.current) {
+        previousSearching.current = searching
+        if (searching && collapsedInSearch.size > 0) setCollapsedInSearch(new Set())
+      }
       const filteredGroups = useMemo(
         () =>
           searching
@@ -459,26 +480,48 @@ window.__ModuleLoader__.load({
 
       // ── the folded tree ─────────────────────────────────────────────────────
       //
-      // A provider is open when the user opened it and closed when the user
-      // closed it. With no explicit choice it opens only if it owns the current
-      // selection (or, with nothing selected yet, if it is the first one listed);
-      // while a search is active every provider opens instead, because a folded
-      // match would otherwise be invisible.
+      // Fold state has two layers, and SEARCH wins the layering:
+      //
+      //   browsing (no query): a provider the user opened or closed keeps that
+      //   explicit choice (`expandedOverrides`, persists across menu sessions);
+      //   one with no choice opens only if it owns the current selection (or,
+      //   with nothing selected yet, if it is the first one listed).
+      //
+      //   searching: EVERY provider starts unfolded, whatever it was folded to
+      //   before — a search is a newer, stronger intent than an old browsing
+      //   choice, and a folded match would read as a broken toggle showing a
+      //   count but no rows. Collapsing a provider DURING a search is honoured,
+      //   but only for this search (`collapsedInSearch`): clearing the query
+      //   restores the pre-search fold state exactly, because the search-time
+      //   collapse never touches `expandedOverrides`.
       const currentProviderId = state.current?.provider ?? null
       const defaultOpenProviderId = currentProviderId ?? filteredGroups[0]?.id ?? null
       const isProviderOpen = useCallback(
         providerId => {
+          if (searching) return !collapsedInSearch.has(providerId)
           const override = expandedOverrides.get(providerId)
           if (override !== undefined) return override
-          return searching || providerId === defaultOpenProviderId
+          return providerId === defaultOpenProviderId
         },
-        [expandedOverrides, defaultOpenProviderId, searching],
+        [collapsedInSearch, expandedOverrides, defaultOpenProviderId, searching],
       )
       const toggleProvider = useCallback(
         providerId => {
+          if (searching) {
+            // Search-time folds live in their own set: clicking records the
+            // choice for THIS search only (toggle on/off within the session),
+            // so leaving the search cannot leak a new permanent override.
+            setCollapsedInSearch(previous => {
+              const next = new Set(previous)
+              if (next.has(providerId)) next.delete(providerId)
+              else next.add(providerId)
+              return next
+            })
+            return
+          }
           setExpandedOverrides(previous => {
             const next = new Map(previous)
-            const current = previous.get(providerId) ?? (searching || providerId === defaultOpenProviderId)
+            const current = previous.get(providerId) ?? providerId === defaultOpenProviderId
             next.set(providerId, !current)
             return next
           })
@@ -680,6 +723,7 @@ window.__ModuleLoader__.load({
         pane,
         trimmedQuery,
         expandedOverrides,
+        collapsedInSearch,
         state.status,
         state.groups,
         state.error,
@@ -720,6 +764,10 @@ window.__ModuleLoader__.load({
         triggerRef.current?.focus()
         setQuery('')
         setHighlightedKey(null)
+        // Belt-and-braces next to the rising-edge guard above: reopening the
+        // menu starts a clean browsing view even if a previous search left its
+        // session collapses behind with the query already cleared.
+        setCollapsedInSearch(previous => (previous.size === 0 ? previous : new Set()))
         if (state.current === null) paneFocus.current = 'drill'
         setPane(state.current === null ? 'model' : 'root')
         setOpen(true)

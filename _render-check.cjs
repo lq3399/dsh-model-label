@@ -406,6 +406,99 @@ check(
   )
 }
 
+// ── the fold layering: search beats browsing, but only for this search ──────
+//
+// The bug this guards: the search-all-open rule sat BELOW the manual-override
+// layer, so a provider the user had folded away earlier stayed folded while a
+// search matched inside it — the toggle showed a live count but rendered no
+// rows. The fix layers the state as: search default (open) > session collapses
+// (this search only) > browsing overrides. These checks drive all three layers:
+//
+//   1. a pre-search manual fold must NOT hide a search match
+//   2. collapsing DURING a search is honoured (otherwise every provider would
+//      be a dead toggle while filtering)
+//   3. clearing the query restores the browsing state exactly — the session
+//      fold never leaks into `expandedOverrides`, and a fresh search starts
+//      open again.
+{
+  const typeQuery = value =>
+    act(() => {
+      const input = document.querySelector('input[role="searchbox"]')
+      const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, value)
+      input.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+    })
+  const toggleFor = label =>
+    providerToggles().find(n => n.querySelector('.dml_providerName').textContent === label)
+
+  state.current = { provider: 'volcengine', model: 'glm-5.3', reasoningEffort: 'high' }
+  act(() => {
+    root.unmount()
+  })
+  act(() => {
+    root = ReactDOM.createRoot(host)
+    root.render(React.createElement(registered.component, seatProps))
+  })
+  openModelPane()
+
+  // Fold the account provider while BROWSING (open, then close): the explicit
+  // close is a permanent browsing override.
+  click(toggleFor('DeepSeek 账号'))
+  click(toggleFor('DeepSeek 账号'))
+  check(
+    'browsing: an explicitly folded provider shows no model rows',
+    !expandedProviders().includes('DeepSeek 账号') && !modelNames().includes('DeepSeek V4.1'),
+    JSON.stringify(expandedProviders()),
+  )
+
+  // Search for a model INSIDE that folded provider — the reported bug: it must
+  // unfold anyway, because a folded match would read as a broken toggle.
+  typeQuery('deepseek')
+  check(
+    'a search unfolds even a provider the user folded before searching',
+    expandedProviders().includes('DeepSeek 账号'),
+    JSON.stringify(expandedProviders()),
+  )
+  check(
+    'the hidden match becomes visible',
+    modelNames().includes('DeepSeek V4.1 Flash'),
+    JSON.stringify(modelNames()),
+  )
+
+  // Now a search-session collapse is honoured: the selection provider is open
+  // by browsing default, yet folding it mid-search must hide it.
+  typeQuery('kimi')
+  const volc = toggleFor('火山方舟')
+  check('search-session state starts every provider open', volc.getAttribute('aria-expanded') === 'true')
+  click(volc)
+  check(
+    'collapsing during a search is honoured',
+    !expandedProviders().includes('火山方舟') && !modelNames().includes('Kimi K2'),
+    JSON.stringify(expandedProviders()),
+  )
+
+  // Clear the query: the session fold belongs to the search only, so the
+  // browsing layer shows through — the selection provider open again (default,
+  // no leaked override), the pre-search fold of the account provider intact.
+  typeQuery('')
+  check(
+    'leaving the search restores the browsing fold state exactly',
+    JSON.stringify(expandedProviders()) === JSON.stringify(['火山方舟']) &&
+      modelNames().includes('GLM 5.3'),
+    JSON.stringify(expandedProviders()),
+  )
+
+  // A FRESH search starts unfolded again: the previous session's collapse did
+  // not persist even within the same menu opening.
+  typeQuery('kimi')
+  check(
+    'a new search re-opens providers collapsed in the previous search',
+    expandedProviders().includes('火山方舟') && modelNames().includes('Kimi K2'),
+    JSON.stringify(expandedProviders()),
+  )
+  typeQuery('')
+}
+
 // ── report ──────────────────────────────────────────────────────────────────
 let failed = 0
 for (const r of results) {
