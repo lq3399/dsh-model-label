@@ -320,12 +320,12 @@ window.__ModuleLoader__.load({
     /**
      * The shadowing seat. Renders the two-level menu with a provider-folded tree
      * for the model pane, labels the trigger `{provider}/{model} · {effort}`, and
-     * shows each model row's exact id as its tooltip.
+     * spells each model row's tooltip as the provider-qualified display name.
      *
-     * `sessionId`, `available`, `directory`, `load`, and `select` arrive from this
-     * entry's `inject` face (the same shared per-session store `/model` writes
-     * through); `locked` is the owner's render-call prop; `renderSlot` is bound by
-     * the slot runtime because this registration declares the official
+     * `available`, `directory`, `load`, and `select` arrive from this entry's
+     * `inject` face (the same shared per-session store `/model` writes through);
+     * `locked` is the owner's render-call prop; `renderSlot` is bound by the
+     * slot runtime because this registration declares the official
      * `conversation.input.model.label` child slot; `t` is the entry's locale seat.
      */
     function ModelLabelSeat(props) {
@@ -370,6 +370,17 @@ window.__ModuleLoader__.load({
       const searchRef = useRef(null)
       const menuRef = useRef(null)
       const [menuPos, setMenuPos] = useState(null)
+      // The menu's size lock: `{ key, width, height }`. Without it the box is
+      // `max-content` wide and row-count tall, and because it opens UPWARD from
+      // the trigger (bottom-right anchored), every keystroke of a search —
+      // fewer matches, shorter rows — visibly jumped the box around. The lock
+      // pins the size measured when the current epoch began; typing and folding
+      // then only scroll or leave whitespace INSIDE a stationary box. `key`
+      // names the epoch (pane, catalog status, error/warning strips): discrete
+      // events that legitimately re-shape the menu re-measure it, while `width:
+      // null` marks the one intermediate render that lays out naturally so the
+      // fresh size can be measured (see the placement effect).
+      const [menuSize, setMenuSize] = useState(null)
       const itemRefs = useRef([])
       // Signature of the last scroll reveal, so folding the tree never re-scrolls
       // while a changed highlight, query, or pane still does.
@@ -676,10 +687,36 @@ window.__ModuleLoader__.load({
         itemRefs.current[index]?.scrollIntoView({ block: 'nearest' })
       }, [revealSignature, open, pane, query, highlightedKey, rows, currentRow])
 
+      // Size-epoch key: the discrete events that legitimately re-shape the menu
+      // (pane switch, catalog status/error/warning strips, the Effort cell
+      // appearing). Typing a query and folding providers are NOT epochs: they
+      // scroll or leave whitespace inside the locked box instead of resizing it.
+      const sizeKey = `${pane}|${state.status}|${state.error ?? ''}|${state.failures.length}|${reasoning !== undefined}`
+      // The lock is live when it was taken for this epoch AND this catalog
+      // (groups identity changes on every reload, which may change the natural
+      // width, so a reload re-measures).
+      const sizeLocked =
+        menuSize !== null && menuSize.key === sizeKey && menuSize.groups === state.groups
+      const menuStyle =
+        sizeLocked && menuSize.width !== null
+          ? {
+              ...(menuPos ?? { visibility: 'hidden', left: 0, top: 0 }),
+              width: menuSize.width,
+              height: menuSize.height,
+            }
+          : (menuPos ?? { visibility: 'hidden', left: 0, top: 0 })
+
       // Place the fixed-position menu above the trigger, clamped to the viewport.
+      // The box opens UPWARD from the trigger's bottom-right corner, so its
+      // width AND height both feed the position: any per-keystroke size change
+      // used to move the left/top edge every character — the "flashing" menu.
+      // The size is therefore measured once per epoch (this effect, before
+      // paint) and locked; while locked, the position cannot move because the
+      // size cannot move.
       React.useLayoutEffect(() => {
         if (!open) {
           setMenuPos(null)
+          setMenuSize(null)
           return undefined
         }
         const place = () => {
@@ -693,43 +730,38 @@ window.__ModuleLoader__.load({
           if (lw > 0) x = Math.min(Math.max(x, MARGIN), window.innerWidth - lw - MARGIN)
           if (lh > 0) y = Math.min(Math.max(y, MARGIN), window.innerHeight - lh - MARGIN)
           // Reuse the previous position object when the coordinates did not
-          // move: React bails out on an identical state, so a scroll or resize
-          // that does not change the clamped position no longer re-renders.
+          // move: React bails out on an identical state, so a scroll that does
+          // not change the clamped position no longer re-renders.
           setMenuPos(previous =>
             previous !== null && previous.left === x && previous.top === y ? previous : { left: x, top: y },
           )
         }
+        // Measure the natural size on every fresh epoch (the render right now
+        // carries no lock, so offset* is the natural max-content size), then
+        // hold it until the epoch changes again. The setState re-renders before
+        // paint, so the unlocked frame is never visible.
+        if (menuSize === null || menuSize.key !== sizeKey || menuSize.groups !== state.groups) {
+          const lw = menuRef.current?.offsetWidth ?? 0
+          const lh = menuRef.current?.offsetHeight ?? 0
+          setMenuSize({
+            key: sizeKey,
+            groups: state.groups,
+            width: lw > 0 ? lw : null,
+            height: lh > 0 ? lh : null,
+          })
+        }
         place()
+        // A viewport resize can change the natural size through the max-width /
+        // max-height clamps, so it invalidates the lock; the effect re-runs on
+        // the cleared lock and re-measures under the new clamps.
+        const remeasure = () => setMenuSize(null)
         window.addEventListener('scroll', place, true)
-        window.addEventListener('resize', place)
+        window.addEventListener('resize', remeasure)
         return () => {
           window.removeEventListener('scroll', place, true)
-          window.removeEventListener('resize', place)
+          window.removeEventListener('resize', remeasure)
         }
-        // Only what actually changes the menu's SIZE may re-place it: the pane
-        // switch, the query (a search box appears / the list shortens), the fold
-        // set, and the catalog surfaces (loading strip, error strip, per-group
-        // warnings) that add or remove rows. `state` as a whole was listed
-        // before, so every store snapshot — including the pending flag flipping
-        // on each selection — tore the listeners down, forced a reflow, and
-        // re-rendered the menu for an unchanged position.
-        //
-        // The catalog surfaces are addressed by their CONTENT (status, error
-        // text, warning count) rather than by the store's array identity, so a
-        // store that rebuilds `failures` on every snapshot does not re-place the
-        // menu for a list that did not change.
-      }, [
-        open,
-        pane,
-        trimmedQuery,
-        expandedOverrides,
-        collapsedInSearch,
-        state.status,
-        state.groups,
-        state.error,
-        state.failures.length,
-        reasoning !== undefined,
-      ])
+      }, [open, sizeKey, state.groups, menuSize])
 
       // Hand the keyboard to the control the last pane transition named: after
       // a drill, the model pane's search box (or the checked row); after a back,
@@ -1038,7 +1070,7 @@ window.__ModuleLoader__.load({
                 ref: menuRef,
                 id: `${id}-menu`,
                 className: 'dml_menu',
-                style: menuPos ?? { visibility: 'hidden', left: 0, top: 0 },
+                style: menuStyle,
                 role: pane === 'model' ? 'group' : 'menu',
                 'aria-label': t('menu.aria'),
                 'aria-busy': state.status === 'loading' || busy,
@@ -1372,7 +1404,6 @@ window.__ModuleLoader__.load({
                 const available = sessions.subagentAddress(sessionId) === undefined
                 const directory = models.directoryFor(sessionId)
                 return {
-                  sessionId,
                   available,
                   directory: directory.store,
                   load: () => {

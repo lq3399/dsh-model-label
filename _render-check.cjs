@@ -70,6 +70,75 @@ const takeScrollCalls = () => {
   return calls
 }
 
+// ── a deterministic box model ───────────────────────────────────────────────
+//
+// jsdom lays nothing out: every offset* is 0, which makes the seat's size-lock
+// short-circuit and its position math a no-op. Give the menu and the trigger a
+// modelled geometry instead — a trigger pinned to the composer's bottom-right
+// corner and a menu whose NATURAL size shrinks with its visible rows — so the
+// "the menu box must not flash while typing" regression has something to assert
+// against. The model is deliberately simple: width = longest visible row,
+// height = row-count dependent. Anything less and the lock could pass
+// vacuously.
+const ROW_H = 28
+const HEADER_H = 70 // search row + padding of the model pane
+const boxModel = {
+  trigger: { right: 600, top: 400, width: 200 }, // composer-bottom-right seat
+  viewport: { width: 1440, height: 900 },
+}
+dom.window.Element.prototype.getBoundingClientRect = function () {
+  if (this.classList?.contains('dml_trigger')) {
+    const t = boxModel.trigger
+    return {
+      left: t.right - t.width,
+      right: t.right,
+      top: t.top,
+      bottom: t.top + 28,
+      width: t.width,
+      height: 28,
+    }
+  }
+  return { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 }
+}
+Object.defineProperty(dom.window.HTMLElement.prototype, 'offsetWidth', {
+  configurable: true,
+  get() {
+    if (!this.classList?.contains('dml_menu')) return 0
+    // The menu is max-content wide: the longest visible label (a provider name
+    // or a model row) sets the width, clamped exactly like the CSS. Derived
+    // from the live DOM, so a search that drops long-named rows naturally
+    // narrows the box — which is the flash the size lock must prevent.
+    let longest = 0
+    for (const node of this.querySelectorAll('.dml_providerName, .dml_modelName, .dml_cellValue')) {
+      longest = Math.max(longest, node.textContent.length)
+    }
+    return Math.min(Math.max(longest * 7 + 48, 240), 420)
+  },
+})
+Object.defineProperty(dom.window.HTMLElement.prototype, 'offsetHeight', {
+  configurable: true,
+  get() {
+    if (!this.classList?.contains('dml_menu')) return 0
+    // Header chrome plus one row height per VISIBLE row: provider toggles and
+    // the model rows they unfold. Folding or filtering removes rows, so the
+    // natural height shrinks with them — again, only if the lock fails.
+    const rows = this.querySelectorAll('.dml_providerToggle, .dml_modelRow, .dml_cell').length
+    return Math.min(HEADER_H + rows * ROW_H, 360)
+  },
+})
+Object.defineProperty(dom.window, 'innerWidth', { configurable: true, get: () => boxModel.viewport.width })
+Object.defineProperty(dom.window, 'innerHeight', { configurable: true, get: () => boxModel.viewport.height })
+const readMenuBox = () => {
+  const menu = document.querySelector('.dml_menu')
+  if (menu === null) return null
+  const style = menu.getAttribute('style') ?? ''
+  const num = name => {
+    const m = style.match(new RegExp(`${name}:\\s*([\\d.]+)px`))
+    return m === null ? null : Number(m[1])
+  }
+  return { left: num('left'), top: num('top'), width: num('width'), height: num('height') }
+}
+
 const React = require(resolveModule('react'))
 const ReactDOM = require(resolveModule('react-dom/client'))
 const { act } = require(resolveModule('react'))
@@ -497,6 +566,106 @@ check(
     JSON.stringify(expandedProviders()),
   )
   typeQuery('')
+}
+
+// ── the menu box must not flash while typing ────────────────────────────────
+//
+// The box is `width: max-content` and as tall as its visible rows, and it
+// opens UPWARD from the trigger's bottom-right corner — so every keystroke of
+// a search moved both the width (longest visible row changes) and the
+// position (computed from the measured size). The size lock pins the box for
+// the whole search: the same left/top/width/height through every keystroke,
+// even though the natural size keeps changing underneath.
+{
+  const typeQuery = value =>
+    act(() => {
+      const input = document.querySelector('input[role="searchbox"]')
+      const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, value)
+      input.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+    })
+
+  state.current = { provider: 'volcengine', model: 'glm-5.3', reasoningEffort: 'high' }
+  act(() => {
+    root.unmount()
+  })
+  act(() => {
+    root = ReactDOM.createRoot(host)
+    root.render(React.createElement(registered.component, seatProps))
+  })
+  openModelPane()
+
+  const opened = readMenuBox()
+  check('the open menu carries a locked size', opened !== null && opened.width > 0 && opened.height > 0, JSON.stringify(opened))
+  // Sanity: the modelled geometry really would shrink under filtering — the
+  // natural size at 'q' (4 visible rows) is smaller than at '' (6 rows), so the
+  // lock is doing measurable work, not passing vacuously.
+  const naturalWidthOf = () => document.querySelector('.dml_menu').offsetWidth
+  const naturalHeightOf = () => document.querySelector('.dml_menu').offsetHeight
+  const lockedWidth = naturalWidthOf()
+  const lockedHeight = naturalHeightOf()
+
+  typeQuery('q')
+  const afterQ = readMenuBox()
+  check(
+    'typing one character keeps the box geometry identical',
+    afterQ !== null &&
+      afterQ.left === opened.left &&
+      afterQ.top === opened.top &&
+      afterQ.width === opened.width &&
+      afterQ.height === opened.height,
+    JSON.stringify({ opened, afterQ }),
+  )
+
+  typeQuery('qw')
+  const afterQw = readMenuBox()
+  check(
+    'typing more keeps the box geometry identical',
+    afterQw !== null &&
+      afterQw.left === opened.left &&
+      afterQw.top === opened.top &&
+      afterQw.width === opened.width &&
+      afterQw.height === opened.height,
+    JSON.stringify({ opened, afterQw }),
+  )
+  // The lock is meaningful: the natural (unlocked) size really did shrink
+  // under the query — otherwise the checks above would pass even without the
+  // lock. The DOM still reports the LOCKED size, so compare against what the
+  // rows say: fewer model rows are rendered now than at the empty query.
+  check(
+    'the locked size hides a real shrink (the lock is load-bearing)',
+    lockedHeight >= naturalHeightOf() && document.querySelectorAll('.dml_modelRow').length < 4,
+    JSON.stringify({ lockedHeight, nowNatural: naturalHeightOf(), rows: document.querySelectorAll('.dml_modelRow').length }),
+  )
+
+  // Clearing the query returns to the same epoch geometry — still no flash.
+  typeQuery('')
+  const afterClear = readMenuBox()
+  check(
+    'clearing the search keeps the box geometry identical',
+    afterClear !== null &&
+      afterClear.left === opened.left &&
+      afterClear.top === opened.top &&
+      afterClear.width === opened.width &&
+      afterClear.height === opened.height,
+    JSON.stringify({ opened, afterClear }),
+  )
+
+  // A pane switch IS a legitimate reshape: the root pane has different content,
+  // so the lock must re-measure (not carry the model-pane size into it).
+  // Escape is dispatched on the trigger so it bubbles through the seat's root
+  // div (React 18 listens at the container; a document-level dispatch would
+  // never reach the handler).
+  act(() => {
+    trigger().dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  })
+  // Escape from the model pane returns to root (a selection exists).
+  const rootBox = readMenuBox()
+  check(
+    'the root pane re-measures instead of reusing the model pane size',
+    rootBox !== null && rootBox.height !== opened.height,
+    JSON.stringify({ opened, rootBox }),
+  )
 }
 
 // ── report ──────────────────────────────────────────────────────────────────

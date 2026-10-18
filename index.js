@@ -7,13 +7,11 @@
  * browser half to the Loader entry whose `name` is the bare package name, so the
  * entry must be mounted even though it registers no Host service.
  *
+ * Exports only `apply`, the same shape every shipped pure-UI Host half uses;
+ * the browser half declares its own service injections.
+ *
  * @module index.js
  */
-
-export const name = 'dsh-model-label'
-
-/** No Host service is required; the browser half declares its own injections. */
-export const inject = []
 
 /**
  * Host-half body. Intentionally empty.
