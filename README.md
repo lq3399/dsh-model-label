@@ -89,6 +89,31 @@ epoch。窗口 resize 会改变 max-width/max-height 钳制，所以也触发重
 并断言锁**确实遮住了真实的收缩**（否则测试会空过），面板切换则必须
 重新测量。
 
+### 冷启动：立即显示上次的标签
+
+触发器文案要用**显示名**拼写，而显示名要等共享目录 store 就绪 —— 冷启动这段
+等待的大头是 Host 端 model-catalog RPC，其中 DeepSeek 账号供应商的 `/models`
+是网络拉取（进程缓存每次启动都是空的，受其自带超时约束，网络慢时能吃满几秒）。
+插件缩短不了这个 RPC，于是把**上次完整解析出的触发器文案按会话缓存在
+localStorage**：冷启动 store 还没有 `current` 时直接显示缓存文案，不再闪
+「正在加载模型…」；权威数据一到就自然替换（通常文字完全相同）并回写缓存。
+重连瞬间 `current` 清零、目录加载失败这两种状态同样落在这条路径上，显示的
+都是「上次在用的模型」。
+
+三条边界：
+
+- 只缓存**显示名**形态；目录里已不存在的选择（id 回退形态）绝不写入缓存，
+  已下线的模型不可能被缓存卡在触发器上；
+- 缓存按 `sessionId` 分键，切换会话读到的是那个会话自己的标签；全部条目
+  以 LRU 修剪到 64 条；
+- localStorage 不可用（配额、隐私模式、测试桩）时静默退回原有行为 ——
+  缓存纯锦上添花，从不承载逻辑。
+
+> 治本在 Host 侧、不在插件：想压缩等待窗口本身，可调低
+> `llm-deepseek-account` 的 `modelsTimeoutMs`（默认 5000ms，超时后回落到
+> 内置目录）；Host 日志里的 "model listing from … loaded N model(s)" 时间戳
+> 可以直接量出这段耗时。
+
 ## 原理：遮蔽单个 Slot
 
 输入框的模型位是 `conversation.input.model`，类型是 `single`。
@@ -269,12 +294,12 @@ shipped seat 逐字一致，有意原样沿用了它的半径/阴影/焦点环 t
 
 ```bash
 npm install            # 只为测试装 jsdom / react / react-dom，插件本身零依赖
-npm test               # 全部检查（45 + 冷启动 + 36）
+npm test               # 全部检查（46 + 冷启动 + 43）
 
 # 也可以单独跑
-node _headless-check.cjs      # 45 项：注册、priority、官方标签槽、显示名与 id 回退、树的折叠
+node _headless-check.cjs      # 46 项：注册、priority、官方标签槽、显示名与 id 回退、树的折叠
 node _coldstart-check.cjs     # 冷启动依赖：inject 必须含 remote.session
-node _render-check.cjs        # 36 项：真实 React + jsdom 点击驱动
+node _render-check.cjs        # 43 项：真实 React + jsdom 点击驱动
 ```
 
 `_headless-check.cjs` 覆盖：bundle 注册、`inject` 声明、`ctx.inject` 服务依赖、
@@ -302,7 +327,10 @@ provider/model）。
 搜索中点折叠确实生效、清掉搜索词后浏览折叠状态**逐字恢复**（搜索开合零泄漏）、
 新一轮搜索重新全展开。尺寸锁另有 6 项专测（注入确定性盒模型）：搜索逐字输入
 和清空的整个过程 left/top/width/height **逐一相等**、锁确实遮住了自然尺寸的
-真实收缩（防空过）、面板切换必须重新测量。
+真实收缩（防空过）、面板切换必须重新测量。冷启动标签缓存另有 7 项专测
+（可变的 live store 驱动 loading→ready 转换）：有种子缓存时冷启动直接显示
+缓存文案（触发器/aria 双查）、就绪后权威标签接管且缓存回写、无缓存时保持
+原有「正在加载模型…」、id 回退形态渲染但不写入缓存。
 
 ## 文件
 

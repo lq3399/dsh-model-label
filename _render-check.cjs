@@ -668,6 +668,222 @@ check(
   )
 }
 
+// ── cold-start label cache ──────────────────────────────────────────────────
+//
+// The loading state is the shared directory store waiting for the Host's
+// model-catalog RPC; the seat cannot shorten that wait, so the last fully
+// resolved label is cached per session and shown while `current` is still
+// null. A live store drives the loading → ready transition:
+//
+//   - a seeded cache renders the cached label instead of "正在加载模型…"
+//   - the authoritative render replaces it and refreshes the cache
+//   - without a cache the loading text shows exactly as before
+//   - a selection whose catalog entry is gone (the id fallback) is never cached
+{
+  // The bundle reads `localStorage` as a page global; expose jsdom's own.
+  global.localStorage = dom.window.localStorage
+  dom.window.localStorage.clear()
+
+  let snapshot = {
+    current: null,
+    routable: null,
+    groups: [],
+    failures: [],
+    status: 'loading',
+    pending: null,
+    error: null,
+  }
+  const listeners = new Set()
+  const liveStore = {
+    getSnapshot: () => snapshot,
+    subscribe: fn => {
+      listeners.add(fn)
+      return () => listeners.delete(fn)
+    },
+    set: next => {
+      snapshot = next
+      for (const fn of [...listeners]) fn()
+    },
+  }
+  const catalog = () => [
+    {
+      id: 'deepseek-account',
+      name: 'DeepSeek Account',
+      models: [
+        {
+          id: 'deepseek-v4.1-flash',
+          name: 'DeepSeek V4.1 Flash',
+          reasoning: { defaultEffort: 'high', efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
+        },
+      ],
+    },
+    {
+      id: 'volcengine',
+      name: '火山方舟',
+      models: [
+        {
+          id: 'glm-5.3',
+          name: 'GLM 5.3',
+          reasoning: { defaultEffort: 'high', efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
+        },
+      ],
+    },
+  ]
+  let cacheRegistered = null
+  exportsObj.apply({
+    effect: fn => {
+      const d = fn()
+      return typeof d === 'function' ? d : () => {}
+    },
+    inject: (services, cb) =>
+      cb({
+        slots: {
+          inject: (slot, register) => register(),
+          register: (meta, component) => {
+            cacheRegistered = { meta, component }
+            return () => {}
+          },
+        },
+        modelDirectories: {
+          directoryFor: () => ({ store: liveStore, load: async () => snapshot, select: async () => ({ ok: true }) }),
+        },
+        sessions: { subagentAddress: () => undefined },
+      }),
+    get: () => undefined,
+    locale: { register: () => () => {}, bind: () => key => key },
+  })
+
+  const mountCacheSeat = sessionId => {
+    const cacheFace = cacheRegistered.meta.inject(sessionId)
+    act(() => {
+      root.unmount()
+      root = ReactDOM.createRoot(host)
+      root.render(
+        React.createElement(cacheRegistered.component, {
+          locked: false,
+          t,
+          renderSlot: officialLabel,
+          ...cacheFace,
+        }),
+      )
+    })
+  }
+
+  // Seed the cache the way a previous session's ready render would have.
+  dom.window.localStorage.setItem(
+    'dml:lastLabel:session-cold',
+    JSON.stringify({
+      provider: 'volcengine',
+      model: 'glm-5.3',
+      providerName: '火山方舟',
+      modelName: 'GLM 5.3',
+      effortName: 'High',
+      at: Date.now(),
+    }),
+  )
+  mountCacheSeat('session-cold')
+  // The visual trigger is two spans (label + effort, like the shipped seat);
+  // the `·` exists only in the title string, so assert the spans directly.
+  check(
+    'a cold start shows the cached label instead of the loading text',
+    trigger().querySelector('.dml_triggerLabel')?.textContent === '火山方舟/GLM 5.3' &&
+      trigger().querySelector('.dml_triggerEffort')?.textContent === 'High' &&
+      !trigger().textContent.includes(DICT['trigger.loading']),
+    trigger().textContent,
+  )
+  check(
+    'the cached label also reaches the aria label',
+    (trigger().getAttribute('aria-label') ?? '').includes('火山方舟/GLM 5.3'),
+    trigger().getAttribute('aria-label'),
+  )
+
+  // Readiness replaces the cache with the authoritative (slot-routed) label.
+  act(() => {
+    liveStore.set({
+      current: { provider: 'volcengine', model: 'glm-5.3', reasoningEffort: 'high' },
+      routable: true,
+      groups: catalog(),
+      failures: [],
+      status: 'ready',
+      pending: null,
+      error: null,
+      retainedEffort: 'High',
+    })
+  })
+  check(
+    'the ready store takes over with the authoritative label',
+    document.querySelector('.dml_trigger [data-official-label="trigger"]') !== null &&
+      trigger().textContent.includes('火山方舟/GLM 5.3'),
+    trigger().textContent,
+  )
+
+  // A selection made elsewhere updates the cache for the next cold start.
+  act(() => {
+    liveStore.set({
+      current: { provider: 'deepseek-account', model: 'deepseek-v4.1-flash', reasoningEffort: 'high' },
+      routable: true,
+      groups: catalog(),
+      failures: [],
+      status: 'ready',
+      pending: null,
+      error: null,
+      retainedEffort: 'High',
+    })
+  })
+  const refreshed = JSON.parse(dom.window.localStorage.getItem('dml:lastLabel:session-cold'))
+  check(
+    'a ready render refreshes the session cache',
+    refreshed.provider === 'deepseek-account' &&
+      refreshed.modelName === 'DeepSeek V4.1 Flash' &&
+      refreshed.effortName === 'High',
+    JSON.stringify(refreshed),
+  )
+
+  // No cache: the cold start reads exactly as before.
+  dom.window.localStorage.clear()
+  act(() => {
+    liveStore.set({
+      current: null,
+      routable: null,
+      groups: [],
+      failures: [],
+      status: 'loading',
+      pending: null,
+      error: null,
+    })
+  })
+  mountCacheSeat('session-blank')
+  check(
+    'without a cache the cold start still shows the loading text',
+    trigger().textContent.includes(DICT['trigger.loading']),
+    trigger().textContent,
+  )
+
+  // A saved selection whose catalog entry is gone renders the id fallback and
+  // must never poison the cache with it.
+  act(() => {
+    liveStore.set({
+      current: { provider: 'retired-provider', model: 'retired-model' },
+      routable: false,
+      groups: catalog(),
+      failures: [],
+      status: 'ready',
+      pending: null,
+      error: null,
+    })
+  })
+  check(
+    'the id fallback renders for a missing catalog entry',
+    trigger().textContent.includes('retired-provider/retired-model'),
+    trigger().textContent,
+  )
+  check(
+    'the id fallback is never written into the cache',
+    dom.window.localStorage.getItem('dml:lastLabel:session-blank') === null,
+    String(dom.window.localStorage.getItem('dml:lastLabel:session-blank')),
+  )
+}
+
 // ── report ──────────────────────────────────────────────────────────────────
 let failed = 0
 for (const r of results) {

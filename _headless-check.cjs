@@ -218,9 +218,11 @@ check('register supplies a component', typeof registered?.component === 'functio
 const face = registered.meta.inject('session-1')
 check(
   'inject face carries exactly the seat contract (no dead props)',
-  JSON.stringify(Object.keys(face).sort()) === JSON.stringify(['available', 'directory', 'load', 'select']),
+  JSON.stringify(Object.keys(face).sort()) ===
+    JSON.stringify(['available', 'directory', 'load', 'select', 'sessionId']),
   JSON.stringify(Object.keys(face)),
 )
+check('inject face passes the session id through', face.sessionId === 'session-1', String(face.sessionId))
 check('inject face reports availability', face.available === true, String(face.available))
 check('inject face exposes the shared directory store', face.directory === directory.store)
 check('inject face exposes load()', typeof face.load === 'function')

@@ -34,6 +34,17 @@
  * fuzzy search, keyboard handling, pending spinners, failure toasts, and the
  * shared per-session ModelDirectory both the seat and `/model` write through.
  *
+ * Cold start: the label can only be spelled from catalog display names once
+ * the shared directory store is ready, and that wait is the Host's
+ * model-catalog RPC — dominated by the DeepSeek account provider's `/models`
+ * listing, a network fetch whose listing cache dies with the Host process. The
+ * wait cannot be shortened from here, so the last fully resolved
+ * `{provider}/{model} · {effort}` is cached per session in localStorage and
+ * rendered at once on the next cold start while the store still has no
+ * selection; the authoritative render replaces it (usually with identical
+ * text) and refreshes the cache. Only display names are ever cached — the id
+ * fallback form is never persisted.
+ *
  * Hand-written ModuleLoader bundle: no build step, and no dependency beyond the
  * `react`/`react-dom` modules the shell already provides. Per the harness
  * plugin practices, NO Harness Client package (primitives included) is loaded
@@ -317,19 +328,103 @@ window.__ModuleLoader__.load({
       return [...groups].sort((a, b) => rank(a.id) - rank(b.id))
     }
 
+    // ── cold-start label cache ─────────────────────────────────────────────────
+    //
+    // The trigger label can only be spelled from catalog display names once the
+    // shared directory store is ready, and on a cold start that wait is the
+    // Host's model-catalog RPC — dominated by the DeepSeek account provider's
+    // `/models` listing, a network fetch bounded by its own deadline whose
+    // listing cache dies with the Host process. The wait cannot be shortened
+    // from here, so the last fully resolved label is cached per session and
+    // rendered at once while the store still has no selection; the
+    // authoritative render replaces it (usually with identical text) and
+    // refreshes the cache. Only catalog display names are ever written: the id
+    // fallback (a selection whose catalog entry is gone) is deliberately NOT
+    // cached, so a retired model can never get stuck on the trigger.
+    const LABEL_CACHE_PREFIX = 'dml:lastLabel:'
+    const LABEL_CACHE_LIMIT = 64
+
+    /**
+     * Read one session's cached trigger label. A malformed entry (schema drift,
+     * manual edits) reads as absent rather than throwing, and a missing
+     * `localStorage` (the check harnesses) reads as absent too.
+     * @param sessionId - the owning session.
+     * @returns the cached entry, or null.
+     */
+    function readCachedLabel(sessionId) {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+      try {
+        const raw = localStorage.getItem(LABEL_CACHE_PREFIX + sessionId)
+        if (raw === null) return null
+        const entry = JSON.parse(raw)
+        if (
+          entry === null ||
+          typeof entry !== 'object' ||
+          typeof entry.provider !== 'string' ||
+          typeof entry.model !== 'string' ||
+          typeof entry.providerName !== 'string' ||
+          typeof entry.modelName !== 'string'
+        ) {
+          return null
+        }
+        return {
+          provider: entry.provider,
+          model: entry.model,
+          providerName: entry.providerName,
+          modelName: entry.modelName,
+          ...(typeof entry.effortName === 'string' ? { effortName: entry.effortName } : {}),
+        }
+      } catch {
+        return null
+      }
+    }
+
+    /**
+     * Write one session's cached trigger label and prune the cache to the
+     * newest entries. Every failure (quota, privacy mode, disabled storage) is
+     * swallowed: the cache is pure polish, never load-bearing.
+     * @param sessionId - the owning session.
+     * @param entry - the display-name label pieces to persist.
+     * @returns {void}
+     */
+    function writeCachedLabel(sessionId, entry) {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return
+      try {
+        localStorage.setItem(LABEL_CACHE_PREFIX + sessionId, JSON.stringify({ ...entry, at: Date.now() }))
+        const keys = []
+        for (let index = 0; index < localStorage.length; index++) {
+          const key = localStorage.key(index)
+          if (key !== null && key.startsWith(LABEL_CACHE_PREFIX)) keys.push(key)
+        }
+        if (keys.length <= LABEL_CACHE_LIMIT) return
+        const stamped = keys.map(key => {
+          try {
+            return { key, at: JSON.parse(localStorage.getItem(key))?.at ?? 0 }
+          } catch {
+            return { key, at: 0 }
+          }
+        })
+        stamped.sort((left, right) => right.at - left.at)
+        for (const stale of stamped.slice(LABEL_CACHE_LIMIT)) localStorage.removeItem(stale.key)
+      } catch {
+        /* best-effort only */
+      }
+    }
+
     /**
      * The shadowing seat. Renders the two-level menu with a provider-folded tree
      * for the model pane, labels the trigger `{provider}/{model} · {effort}`, and
      * spells each model row's tooltip as the provider-qualified display name.
      *
-     * `available`, `directory`, `load`, and `select` arrive from this entry's
-     * `inject` face (the same shared per-session store `/model` writes through);
-     * `locked` is the owner's render-call prop; `renderSlot` is bound by the
-     * slot runtime because this registration declares the official
+     * `available`, `sessionId`, `directory`, `load`, and `select` arrive from
+     * this entry's `inject` face (the same shared per-session store `/model`
+     * writes through; `sessionId` keys the cold-start label cache); `locked` is
+     * the owner's render-call prop; `renderSlot` is bound by the slot runtime
+     * because this registration declares the official
      * `conversation.input.model.label` child slot; `t` is the entry's locale seat.
      */
     function ModelLabelSeat(props) {
-      const { locked, available, directory: store, t, renderSlot } = props
+      const { locked, available, sessionId, directory: store, t, renderSlot } = props
 
       const state = React.useSyncExternalStore(
         useCallback(fn => store.subscribe(fn), [store]),
@@ -391,6 +486,18 @@ window.__ModuleLoader__.load({
       // focus falls to <body> and the menu stops receiving key events.
       const paneFocus = useRef(null)
       const id = React.useId()
+      // Cold-start label cache, read once per session (see readCachedLabel):
+      // while the directory has no selection yet — the cold-start window before
+      // the catalog RPC and the session projection land — the last resolved
+      // label renders instead of the loading text. A label this session's own
+      // ready renders produced is fresher than the mount-time read (a
+      // connection reset zeroes `current` without changing the session), so it
+      // wins in the label block below.
+      const lastReadyLabelRef = useRef(null)
+      const mountCachedLabel = useMemo(
+        () => (available ? readCachedLabel(sessionId) : null),
+        [available, sessionId],
+      )
 
       const groups = useMemo(() => orderModelProviders(state.groups), [state.groups])
       // A flat index of every catalog model, keyed `provider\u0000model`, so the
@@ -789,6 +896,26 @@ window.__ModuleLoader__.load({
         ;(cell !== null && cell !== undefined && !cell.disabled ? cell : triggerRef.current)?.focus()
       }, [open, pane, showSearch])
 
+      // Refresh the cold-start cache whenever this session's render resolves
+      // the selection to catalog display names. Only that form is persisted —
+      // the id fallback (a selection whose catalog entry is gone) must never
+      // become the next cold start's label. The ref copy additionally covers
+      // this session's own reconnect gaps: a `connection/reset` zeroes
+      // `current` without changing the session, and the just-shown label is
+      // then more current than the mount-time read.
+      useEffect(() => {
+        if (!available || state.current === null || currentChoice === undefined) return
+        const entry = {
+          provider: state.current.provider,
+          model: state.current.model,
+          providerName: providerName(currentChoice.group),
+          modelName: currentChoice.model.name,
+          ...(effortLabel === undefined ? {} : { effortName: effortLabel }),
+        }
+        lastReadyLabelRef.current = { sessionId, entry }
+        writeCachedLabel(sessionId, entry)
+      }, [available, sessionId, state.current, currentChoice, providerName, effortLabel])
+
       if (!available) return null
 
       const show = () => {
@@ -901,20 +1028,38 @@ window.__ModuleLoader__.load({
         return `${providerName(group)}/${model.name}`
       }
 
+      // While no selection is resolved yet, the cached label (when one exists)
+      // stands in for the loading/fallback text — the cold-start wait, a
+      // reconnect gap, or a failed catalog load all read as "the model you were
+      // last using". The cached effort name rides along so the trigger reads as
+      // one consistent snapshot; once `current` lands, the authoritative
+      // `effortLabel` takes over unchanged.
+      const cachedLabel =
+        lastReadyLabelRef.current?.sessionId === sessionId
+          ? lastReadyLabelRef.current.entry
+          : mountCachedLabel
+      const cachedSelectionLabel =
+        cachedLabel === null ? null : `${cachedLabel.providerName}/${cachedLabel.modelName}`
+      const displayEffort =
+        state.current === null && cachedLabel?.effortName !== undefined ? cachedLabel.effortName : effortLabel
+
       const selectionLabel =
         state.current === null
-          ? waiting
-            ? t('trigger.loading')
-            : t('trigger.fallback')
+          ? (cachedSelectionLabel ?? (waiting ? t('trigger.loading') : t('trigger.fallback')))
           : spell(state.current.provider, state.current.model)
-      const triggerLabel = effortLabel === undefined ? selectionLabel : `${selectionLabel} · ${effortLabel}`
-      const triggerAria = waiting
-        ? t('trigger.loading')
-        : state.current === null
-          ? t('trigger.selectAria')
-          : effortLabel === undefined
+      const triggerLabel = displayEffort === undefined ? selectionLabel : `${selectionLabel} · ${displayEffort}`
+      const triggerAria =
+        state.current === null && cachedSelectionLabel !== null
+          ? displayEffort === undefined
             ? t('trigger.aria', { model: selectionLabel })
-            : t('trigger.ariaEffort', { model: selectionLabel, effort: effortLabel })
+            : t('trigger.ariaEffort', { model: selectionLabel, effort: displayEffort })
+          : waiting
+            ? t('trigger.loading')
+            : state.current === null
+              ? t('trigger.selectAria')
+              : displayEffort === undefined
+                ? t('trigger.aria', { model: selectionLabel })
+                : t('trigger.ariaEffort', { model: selectionLabel, effort: displayEffort })
 
       itemRefs.current = []
       let itemIndex = 0
@@ -1057,7 +1202,10 @@ window.__ModuleLoader__.load({
               ? selectionLabel
               : qualifiedLabel(currentChoice.group, currentChoice.model, 'trigger', true),
           ),
-          effortLabel !== undefined && h('span', { className: 'dml_triggerEffort' }, effortLabel),
+          // `displayEffort` (not `effortLabel`): on a cold start the cached
+          // effort name is part of the displayed snapshot, while the
+          // authoritative `effortLabel` is still undefined.
+          displayEffort !== undefined && h('span', { className: 'dml_triggerEffort' }, displayEffort),
           busy
             ? h(BusyDot, null)
             : h(IconChevronDown, { className: clsx('dml_chevron', open && 'dml_chevronOpen') }),
@@ -1405,6 +1553,9 @@ window.__ModuleLoader__.load({
                 const directory = models.directoryFor(sessionId)
                 return {
                   available,
+                  // The seat keys its cold-start label cache by session, so a
+                  // switch to another session reads that session's own label.
+                  sessionId,
                   directory: directory.store,
                   load: () => {
                     if (available) directory.load().catch(() => {})
