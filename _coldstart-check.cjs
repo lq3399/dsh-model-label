@@ -21,12 +21,15 @@ const problems = []
 const ok = []
 
 // ── 1. the declared inject list ──────────────────────────────────────────────
-const m = source.match(/const inject = \[([^\]]*)\]/)
+// Anchored on the `slots` entry so a future `const inject = [...]` elsewhere in
+// the bundle (a helper, a second plugin row) cannot be picked up instead.
+const m = source.match(/const inject = \[\s*['"]slots['"]([^\]]*)\]/)
+// Hoisted so section 3 can compare against the same parsed list.
+let declared = []
 if (m === null) {
   problems.push('could not find the `const inject = [...]` declaration')
 } else {
-  const declared = m[1]
-    .split(',')
+  declared = ['slots', ...m[1].split(',')]
     .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
     .filter(Boolean)
   ok.push(`declared inject: ${JSON.stringify(declared)}`)
@@ -62,10 +65,8 @@ if (typeof shipped === 'string' && shipped !== '' && fs.existsSync(shipped)) {
       .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
       .filter(Boolean)
     ok.push(`shipped ui-model-selection inject: ${JSON.stringify(shippedList)}`)
-    const declared = (m?.[1] ?? '')
-      .split(',')
-      .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
-      .filter(Boolean)
+    // Reuse the list parsed in section 1 (it includes the anchor entry), so the
+    // two sections can never disagree about what this plugin declares.
     for (const need of ['remote', 'remote.session']) {
       if (shippedList.includes(need) && !declared.includes(need)) {
         problems.push(`shipped declares "${need}" but this plugin does not`)

@@ -371,38 +371,44 @@ window.__ModuleLoader__.load({
       const id = React.useId()
 
       const groups = useMemo(() => orderModelProviders(state.groups), [state.groups])
-      const choices = useMemo(
-        () =>
-          groups.flatMap(group =>
-            group.models.map(model => ({
-              group,
-              model,
-              selection: {
-                provider: group.id,
-                model: model.id,
-                ...(model.reasoning?.defaultEffort === undefined
-                  ? {}
-                  : { reasoningEffort: model.reasoning.defaultEffort }),
-              },
-            })),
-          ),
-        [groups],
-      )
-      const showSearch = choices.length > 4
+      // A flat index of every catalog model, keyed `provider\u0000model`, so the
+      // current selection resolves in one lookup instead of scanning the whole
+      // catalog on every render. `count` drives the search-box threshold and the
+      // empty-state copy. The per-entry `selection` object is NOT kept: nothing
+      // reads it (selection payloads are built at the click sites), so building
+      // it once per model per catalog update would be dead work.
+      const choiceIndex = useMemo(() => {
+        const byKey = new Map()
+        let count = 0
+        for (const group of groups) {
+          for (const model of group.models) {
+            byKey.set(`${group.id}\u0000${model.id}`, { group, model })
+            count += 1
+          }
+        }
+        return { byKey, count }
+      }, [groups])
+      const showSearch = choiceIndex.count > 4
       // Tracks whether the search box existed on the previous render, so a
       // search-mode flip while the model pane is open hands focus to the box
       // (matching the shipped seat's drill-on-mode-change behavior).
       const previousShowSearch = useRef(showSearch)
-      const searching = showSearch && query.trim() !== ''
+      // The trimmed query is the only form that affects the list; keeping it as
+      // the dependency means typing a trailing space recomputes nothing, and
+      // `searching` no longer has to be listed separately (it is derived from
+      // these same two values).
+      const trimmedQuery = query.trim()
+      const searching = showSearch && trimmedQuery !== ''
       const filteredGroups = useMemo(
         () =>
-          groups
-            .map(group => ({
-              ...group,
-              models: rankByName(group.models, searching ? query.trim() : ''),
-            }))
-            .filter(group => group.models.length > 0),
-        [groups, query, showSearch, searching],
+          searching
+            ? groups
+                .map(group => ({ ...group, models: rankByName(group.models, trimmedQuery) }))
+                .filter(group => group.models.length > 0)
+            : // No query: the catalog order stands, so the group objects are
+              // reused as-is instead of copied per keystroke.
+              groups.filter(group => group.models.length > 0),
+        [groups, searching, trimmedQuery],
       )
 
       const providerName = useCallback(
@@ -483,33 +489,39 @@ window.__ModuleLoader__.load({
       // One flat row list: provider toggles and the model rows they unfold. The
       // keyboard walk, the tab walk, and the highlight all address this list, so
       // a folded provider simply removes its models from every walk at once.
-      const rows = useMemo(() => {
+      //
+      // The key->index map is built in the same pass: the highlight, the saved
+      // selection, and the scroll reveal all need a row's index, and they used
+      // to each walk the list again on every render.
+      const { rows, rowIndexByKey } = useMemo(() => {
         const out = []
+        const indexByKey = new Map()
         for (const group of filteredGroups) {
           const expanded = isProviderOpen(group.id)
+          indexByKey.set(`p:${group.id}`, out.length)
           out.push({ kind: 'provider', key: `p:${group.id}`, group, expanded })
           if (!expanded) continue
           for (const model of group.models) {
+            indexByKey.set(`m:${group.id}/${model.id}`, out.length)
             out.push({ kind: 'model', key: `m:${group.id}/${model.id}`, group, model })
           }
         }
-        return out
+        return { rows: out, rowIndexByKey: indexByKey }
       }, [filteredGroups, isProviderOpen])
 
-      const rowIndexOf = key => (key === null || key === undefined ? -1 : rows.findIndex(row => row.key === key))
+      const rowIndexOf = key => (key === null || key === undefined ? -1 : (rowIndexByKey.get(key) ?? -1))
+      // The row key is a pure function of the saved selection, so it is spelled
+      // directly instead of scanning `rows`. It is still reported as ABSENT when
+      // that row is not currently rendered (its provider folded away, or the
+      // search filtered it out) — the reveal fallback below depends on the
+      // difference between "the selected row exists" and "it does not".
       const currentRowKey =
-        state.current === null
-          ? undefined
-          : rows.find(
-              row =>
-                row.kind === 'model' &&
-                row.group.id === state.current.provider &&
-                row.model.id === state.current.model,
-            )?.key
+        state.current === null ? undefined : `m:${state.current.provider}/${state.current.model}`
+      const currentRowIndex = rowIndexOf(currentRowKey)
+      const currentRow = currentRowIndex < 0 ? undefined : currentRowKey
       const highlightedIndex = rowIndexOf(highlightedKey)
-      const fallbackIndex = rowIndexOf(currentRowKey)
       const activeRowIndex =
-        rows.length === 0 ? -1 : highlightedIndex >= 0 ? highlightedIndex : fallbackIndex >= 0 ? fallbackIndex : 0
+        rows.length === 0 ? -1 : highlightedIndex >= 0 ? highlightedIndex : currentRowIndex >= 0 ? currentRowIndex : 0
       const activeRow = activeRowIndex < 0 ? undefined : rows[activeRowIndex]
       const activeDescendant =
         activeRow === undefined
@@ -519,13 +531,9 @@ window.__ModuleLoader__.load({
             : `${id}-provider-${activeRowIndex}`
 
       const currentChoice =
-        choices[
-          state.current === null
-            ? -1
-            : choices.findIndex(
-                c => c.selection.provider === state.current?.provider && c.selection.model === state.current.model,
-              )
-        ]
+        state.current === null
+          ? undefined
+          : choiceIndex.byKey.get(`${state.current.provider}\u0000${state.current.model}`)
       const reasoning = currentChoice?.model.reasoning
       const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
       const effortLabel =
@@ -553,32 +561,32 @@ window.__ModuleLoader__.load({
       const pending = state.pending
       const busy = pending !== null
 
-      const load = useCallback(() => {
+      // `load`/`select` are called only from event handlers, never passed to a
+      // memoized child, so a `useCallback` keyed on the (per-render) props
+      // object could never hit and only added an allocation per render.
+      const load = () => {
         try {
           props.load()
         } catch {
           /* the store's own error surface reports a failed catalog load */
         }
-      }, [props])
+      }
 
       const reload = () => {
         lastActionRef.current = 'load'
         load()
       }
 
-      const select = useCallback(
-        selection => {
-          try {
-            return Promise.resolve(props.select(selection))
-          } catch (error) {
-            return Promise.resolve({
-              ok: false,
-              error: { code: 'local', message: String(error?.message ?? error) },
-            })
-          }
-        },
-        [props],
-      )
+      const select = selection => {
+        try {
+          return Promise.resolve(props.select(selection))
+        } catch (error) {
+          return Promise.resolve({
+            ok: false,
+            error: { code: 'local', message: String(error?.message ?? error) },
+          })
+        }
+      }
 
       // Outside-click and Escape dismissal.
       useEffect(() => {
@@ -612,17 +620,18 @@ window.__ModuleLoader__.load({
         lastRevealRef.current = revealSignature
         // Prefer the highlight, then the saved selection, then the first model
         // row — never a bare provider toggle, which would leave the matching
-        // model it unfolds just below the fold.
+        // model it unfolds just below the fold. `currentRow` is undefined when
+        // the selected row is not rendered, so the search hit still wins.
         const target =
           highlightedKey ??
-          currentRowKey ??
+          currentRow ??
           rows.find(row => row.kind === 'model')?.key ??
           rows[0]?.key
         if (target === undefined) return
-        const index = rows.findIndex(row => row.key === target)
+        const index = rowIndexOf(target)
         if (index < 0) return
         itemRefs.current[index]?.scrollIntoView({ block: 'nearest' })
-      }, [revealSignature, open, pane, query, highlightedKey, rows, currentRowKey])
+      }, [revealSignature, open, pane, query, highlightedKey, rows, currentRow])
 
       // Place the fixed-position menu above the trigger, clamped to the viewport.
       React.useLayoutEffect(() => {
@@ -640,7 +649,12 @@ window.__ModuleLoader__.load({
           let y = rect.top - 8 - lh
           if (lw > 0) x = Math.min(Math.max(x, MARGIN), window.innerWidth - lw - MARGIN)
           if (lh > 0) y = Math.min(Math.max(y, MARGIN), window.innerHeight - lh - MARGIN)
-          setMenuPos({ left: x, top: y })
+          // Reuse the previous position object when the coordinates did not
+          // move: React bails out on an identical state, so a scroll or resize
+          // that does not change the clamped position no longer re-renders.
+          setMenuPos(previous =>
+            previous !== null && previous.left === x && previous.top === y ? previous : { left: x, top: y },
+          )
         }
         place()
         window.addEventListener('scroll', place, true)
@@ -649,7 +663,29 @@ window.__ModuleLoader__.load({
           window.removeEventListener('scroll', place, true)
           window.removeEventListener('resize', place)
         }
-      }, [open, pane, state, query, expandedOverrides])
+        // Only what actually changes the menu's SIZE may re-place it: the pane
+        // switch, the query (a search box appears / the list shortens), the fold
+        // set, and the catalog surfaces (loading strip, error strip, per-group
+        // warnings) that add or remove rows. `state` as a whole was listed
+        // before, so every store snapshot — including the pending flag flipping
+        // on each selection — tore the listeners down, forced a reflow, and
+        // re-rendered the menu for an unchanged position.
+        //
+        // The catalog surfaces are addressed by their CONTENT (status, error
+        // text, warning count) rather than by the store's array identity, so a
+        // store that rebuilds `failures` on every snapshot does not re-place the
+        // menu for a list that did not change.
+      }, [
+        open,
+        pane,
+        trimmedQuery,
+        expandedOverrides,
+        state.status,
+        state.groups,
+        state.error,
+        state.failures.length,
+        reasoning !== undefined,
+      ])
 
       // Hand the keyboard to the control the last pane transition named: after
       // a drill, the model pane's search box (or the checked row); after a back,
@@ -750,7 +786,16 @@ window.__ModuleLoader__.load({
         lastActionRef.current = 'select'
         setSelectionFocus(true)
         triggerRef.current?.focus()
-        select(selection).then(settleSelection)
+        // `select` already converts a synchronous throw into an `{ ok: false }`
+        // result, but a rejecting promise (a transport failure inside the
+        // directory) would otherwise escape as an unhandled rejection with no
+        // feedback at all. Route it through the same toast path.
+        select(selection).then(settleSelection, error =>
+          settleSelection({
+            ok: false,
+            error: { code: 'local', message: String(error?.message ?? error) },
+          }),
+        )
       }
 
       // ── labels: the whole point of this plugin ──────────────────────────────
@@ -1124,7 +1169,11 @@ window.__ModuleLoader__.load({
                                           if (showSearch) setHighlightedKey(`m:${group.id}/${model.id}`)
                                           else itemRefs.current[rowIndex]?.focus()
                                         },
-                                  title: spell(group.id, model.id),
+                                  // The row already holds the catalog group and
+                                  // model, so the tooltip is spelled directly.
+                                  // `spell()` would re-search both from scratch
+                                  // for every row, making the list O(n²).
+                                  title: `${providerName(group)}/${model.name}`,
                                   disabled: busy,
                                   onClick: () => choose({ provider: group.id, model: model.id }),
                                 },
@@ -1157,7 +1206,7 @@ window.__ModuleLoader__.load({
                     h(
                       'div',
                       { className: 'dml_empty', role: 'status' },
-                      t(choices.length === 0 ? 'empty.models' : 'search.empty'),
+                      t(choiceIndex.count === 0 ? 'empty.models' : 'search.empty'),
                     ),
                 ),
               pane === 'effort' &&

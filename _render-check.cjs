@@ -181,12 +181,14 @@ const t = (key, params) => {
 }
 
 // The plugin's own Chinese dictionary, read back out of the bundle so this
-// harness never drifts from the shipped strings.
+// harness never drifts from the shipped strings. The match is anchored on the
+// DICT opener and closed by the following section banner, so re-indenting or
+// appending entries inside DICT cannot break the extraction.
 const DICT = (() => {
-  const match = source.match(/const DICT = \{[\s\S]*?\n    \}/)
+  const match = source.match(/const DICT = \{([\s\S]*?)\n    \}\n\n    \/\/ ──/)
   if (match === null) throw new Error('could not read DICT out of the bundle')
   // eslint-disable-next-line no-new-func
-  return new Function(`${match[0]}\nreturn DICT`)().zh
+  return new Function(`const DICT = {${match[1]}\n}\nreturn DICT`)().zh
 })()
 const face = registered.meta.inject('session-1')
 const seatProps = { locked: false, t, renderSlot: officialLabel, ...face }
