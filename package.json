@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-label",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "private": true,
   "type": "module",
   "description": "Show the composer's model seat as {provider}/{model} · {effort} in the bottom-right corner of the DSH Web GUI, with a provider-folded tree for the model list.",
@@ -39,7 +39,7 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.0.5"
+    "@deepseek-ai/cordis": "~4.1.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {

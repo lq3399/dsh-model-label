@@ -20,8 +20,11 @@
  * sanctioned extension point for non-interactive label decoration, so official
  * label decorations — the temporary 1017 release badge today, whatever ships
  * there tomorrow — keep working inside this shadowing seat. With no occupant
- * the slot renders our fallback (the plain catalog name), which reads
- * identically to the old self-rendered label.
+ * the slot renders our fallback: the catalog name decorated with the entry's
+ * own `model.badge` in the shipped seat's exact shape (badge before the name in
+ * the trigger, after it in menus and rows). A bare name would silently drop a
+ * badge the shipped seat still draws, because badges ride the model listing and
+ * nothing about this seat owns them.
  *
  * The model pane is a COLLAPSIBLE TREE folded by provider: one toggle row per
  * provider, its models nested underneath, and only the provider that owns the
@@ -190,6 +193,18 @@ window.__ModuleLoader__.load({
 .dml_toastLeave{opacity:0;transform:translate(-50%,calc(-100% + 4px))}
 .dml_toastIcon{color:var(--dsw-alias-state-error-primary);flex:none;display:flex}
 .dml_toastText{min-width:0}
+.dml_badgedName{vertical-align:baseline;white-space:nowrap;align-items:center;gap:4px;max-width:100%;display:inline-flex}
+.dml_badgedNameText{text-overflow:ellipsis;min-width:0;overflow:hidden}
+.dml_badge{flex:none}
+.dml_tag{display:inline-flex;align-items:center;border-radius:999px;corner-shape:round;padding:1px 8px;font-size:11px;line-height:17px;font-weight:500;white-space:nowrap}
+.dml_tag[data-tone=outline]{border:.5px solid var(--dsw-alias-border-l4);color:var(--dsw-alias-label-tertiary)}
+.dml_tag[data-tone=solid]{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-3)}
+.dml_tag[data-tone=neutral]{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary)}
+.dml_tag[data-tone=quiet]{color:var(--dsw-alias-label-tertiary)}
+.dml_tag[data-tone=success]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}
+.dml_tag[data-tone=info]{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 10%,transparent);color:var(--dsw-alias-state-business-primary)}
+.dml_tag[data-tone=warning]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-primary)}
+.dml_tag[data-tone=danger]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}
 `
 
     // 16px stroke icons on the currentColor, matching the host's outline icon
@@ -236,6 +251,78 @@ window.__ModuleLoader__.load({
 
     /** The stock `StateDot`'s ongoing state: a small spinning ring. */
     const BusyDot = () => h('span', { className: 'dml_dot' })
+
+    /**
+     * The read the seat performs when a host binds its inject face without the
+     * renderer's `hooks` seat: a constant selector over no snapshot. Keeping one
+     * stable function here (rather than a conditional hook call) keeps the hook
+     * order identical on both paths.
+     * @returns undefined — no observable locale snapshot to select from.
+     */
+    const noopLocaleHook = () => undefined
+
+    /**
+     * The stock `Tag`: a pill-shaped label carrying one of the host's closed
+     * tone set. Self-hosted from the primitives' markup (`span` + `data-tone`)
+     * and CSS, under this plugin's prefix, so a catalog badge renders inside a
+     * shadowing seat exactly as the shipped seat would draw it.
+     * @param tone - tone id; the stylesheet covers every host tone.
+     * @param children - the badge text.
+     */
+    const Tag = ({ tone = 'outline', children }) =>
+      h('span', { className: 'dml_tag', 'data-tone': tone }, children)
+
+    /**
+     * Resolve a catalog badge's text: a literal string, or a map keyed by
+     * lowercase language id whose English entry is required. Mirrors the
+     * locale service's `resolveText` (literal passes through; a map walks the
+     * active language's fallback chain and finally English), so a localized
+     * badge matches what the shipped seat shows.
+     * @param badgeText - the badge's `text` field.
+     * @param resolveText - the locale service's resolver, when available.
+     * @param activeLocale - the active locale id, the fallback-chain start.
+     * @returns the resolved text, or undefined when nothing usable exists.
+     */
+    function resolveBadgeText(badgeText, resolveText, activeLocale) {
+      if (typeof badgeText === 'string') return badgeText
+      if (badgeText === null || typeof badgeText !== 'object') return undefined
+      if (typeof resolveText === 'function' && typeof activeLocale === 'string') {
+        try {
+          const resolved = resolveText(badgeText)
+          if (typeof resolved === 'string' && resolved !== '') return resolved
+        } catch {
+          // Fall through to the English entry below.
+        }
+      }
+      const english = badgeText.en ?? badgeText.en_US ?? badgeText.en_us
+      return typeof english === 'string' ? english : undefined
+    }
+
+    /**
+     * The model name with its catalog badge, in the shipped seat's exact shape:
+     * the badge precedes the name in the trigger and follows it in menus and
+     * rows. Used only as the label slot's fallback — an official decoration
+     * that occupies the slot supersedes it entirely.
+     * @param model - the complete catalog entry.
+     * @param placement - trigger, menu, or option.
+     * @param resolveText - the locale service's resolver, when available.
+     * @param activeLocale - the active locale id.
+     * @returns the name, decorated when the entry declares a badge.
+     */
+    function modelLabelFallback(model, placement, resolveText, activeLocale) {
+      const badge = model.badge
+      const text = badge === undefined ? undefined : resolveBadgeText(badge.text, resolveText, activeLocale)
+      const tone = badge?.tone ?? 'outline'
+      if (text === undefined) return model.name
+      const tag = h(Tag, { tone }, text)
+      return h(
+        'span',
+        { className: 'dml_badgedName' },
+        placement === 'trigger' ? h(Fragment, null, tag, ' ') : null,
+        h('span', { className: 'dml_badgedNameText' }, model.name),
+        placement === 'trigger' ? null : h(Fragment, null, ' ', tag),
+      )
+    }
 
     const TOAST_TTL = 4000
     const TOAST_LEAVE = 200
@@ -424,7 +511,25 @@ window.__ModuleLoader__.load({
      * `conversation.input.model.label` child slot; `t` is the entry's locale seat.
      */
     function ModelLabelSeat(props) {
-      const { locked, available, sessionId, directory: store, t, renderSlot } = props
+      const {
+        locked,
+        available,
+        sessionId,
+        directory: store,
+        t,
+        renderSlot,
+        resolveText,
+        useLocale,
+      } = props
+
+      // Badge text may be a per-language map, so the trigger has to re-render
+      // on a locale switch. The renderer turns the inject face's `hooks.locale`
+      // into this `useLocale` seat (uSES-safe, stable between changes);
+      // `active` names the language that starts the fallback chain. The
+      // fallback keeps the hook call unconditional, so the hook order stays
+      // fixed on hosts that bind the face without supporting `hooks`.
+      const readLocale = useLocale ?? noopLocaleHook
+      const activeLocale = readLocale(snapshot => snapshot?.active)
 
       const state = React.useSyncExternalStore(
         useCallback(fn => store.subscribe(fn), [store]),
@@ -560,9 +665,15 @@ window.__ModuleLoader__.load({
       // The registration declares `conversation.input.model.label` exactly as the
       // shipped seat does, so the slot runtime binds `renderSlot` into this
       // component. Routing every model name through it keeps the official label
-      // decorations (the 1017 release badge today) working inside this seat;
-      // with no occupant the outlet renders our fallback, the plain catalog
-      // name — identical to the old self-rendered label.
+      // decorations (the 1017 release badge today) working inside this seat.
+      //
+      // With NO occupant the outlet renders this registration's fallback. That
+      // fallback deliberately reproduces the shipped seat's own fallback — the
+      // catalog name decorated with `model.badge` in the same
+      // `<span.badgedName>` shape and Tag tone — because a bare `model.name`
+      // would silently drop a badge the shipped seat still draws (badges ride
+      // the model listing, so a provider that starts emitting one would lose it
+      // only here). An occupant supersedes the fallback entirely.
       //
       // The owner props match the shipped seat exactly: `model` is the COMPLETE
       // catalog entry (a decorator may read `model.reasoning`, not just the
@@ -570,7 +681,8 @@ window.__ModuleLoader__.load({
       // `<span data-provider-id data-model-id>` anchor the shipped seat uses.
       const labelInner = useCallback(
         (group, model, placement, selected) => {
-          if (typeof renderSlot !== 'function') return model.name
+          const fallback = modelLabelFallback(model, placement, resolveText, activeLocale)
+          if (typeof renderSlot !== 'function') return fallback
           return h(
             'span',
             { 'data-provider-id': group.id, 'data-model-id': model.id },
@@ -582,11 +694,11 @@ window.__ModuleLoader__.load({
                 placement,
                 selected,
               },
-              { fallback: model.name },
+              { fallback },
             ),
           )
         },
-        [renderSlot, providerName],
+        [renderSlot, providerName, resolveText, activeLocale],
       )
 
       /** The provider-qualified trigger/cell label: `{providerName}/{labelSlot}`. */
@@ -1538,9 +1650,10 @@ window.__ModuleLoader__.load({
       // slot with the exact spec the shipped seat declares. The declaration is
       // what binds `renderSlot` into the component, and the slot itself is the
       // sanctioned extension point official label decorations register into.
-      ctx.inject(['slots', 'modelDirectories', 'sessions', 'remote', 'remote.session'], scope => {
+      ctx.inject(['slots', 'modelDirectories', 'sessions', 'locale', 'remote', 'remote.session'], scope => {
         const models = scope.modelDirectories
         const sessions = scope.sessions
+        const locale = scope.locale
         scope.slots.inject('conversation.input.model', () =>
           scope.slots.register(
             {
@@ -1561,6 +1674,15 @@ window.__ModuleLoader__.load({
                     if (available) directory.load().catch(() => {})
                   },
                   select: selection => (available ? directory.select(selection) : Promise.resolve(undefined)),
+                  // A catalog badge may carry translations keyed by language id.
+                  // The `hooks` face turns this locale snapshot into a `useLocale`
+                  // prop: a language switch then re-renders the labels, and
+                  // `resolveText` walks the new language's fallback chain (English
+                  // last) — the same resolution the shipped seat applies to its own
+                  // badges. `hooks`/`keyedHooks` are the renderer's declared shape
+                  // for inject-face observables and are stripped before render.
+                  hooks: { locale },
+                  resolveText: text => locale.resolveText(text),
                 }
               },
             },

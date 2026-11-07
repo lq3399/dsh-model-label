@@ -150,6 +150,16 @@ const directoryState = {
 }
 const directoryStore = { getSnapshot: () => directoryState, subscribe: () => () => {} }
 
+// The locale service's two faces the seat consumes: `getSnapshot` (bound by the
+// renderer into the `useLocale` hook through the inject face's `hooks.locale`)
+// and `resolveText` (badge text that is a per-language map).
+const localeSnapshot = { active: 'en', locales: [], revision: 0 }
+const localeStub = {
+  getSnapshot: () => localeSnapshot,
+  subscribe: () => () => {},
+  resolveText: text => (typeof text === 'string' ? text : (text.en ?? '')),
+}
+
 // ── exercise apply() against a fake ctx ──────────────────────────────────────
 let registered = null
 const registrations = []
@@ -177,6 +187,9 @@ const fakeCtx = {
       },
       modelDirectories: { directoryFor: () => directory },
       sessions: { subagentAddress: () => undefined },
+      // The seat resolves badge text through the locale service, so the scope
+      // has to carry it the way the real Cordis scope does.
+      locale: localeStub,
     })
   },
   get: () => undefined,
@@ -219,7 +232,7 @@ const face = registered.meta.inject('session-1')
 check(
   'inject face carries exactly the seat contract (no dead props)',
   JSON.stringify(Object.keys(face).sort()) ===
-    JSON.stringify(['available', 'directory', 'load', 'select', 'sessionId']),
+    JSON.stringify(['available', 'directory', 'hooks', 'load', 'resolveText', 'select', 'sessionId']),
   JSON.stringify(Object.keys(face)),
 )
 check('inject face passes the session id through', face.sessionId === 'session-1', String(face.sessionId))
@@ -328,6 +341,90 @@ check(
     'the trigger still reads provider/model through the slot',
     collectText(slotTrigger).join('').includes('DeepSeek/DeepSeek V4.1 Flash'),
     collectText(slotTrigger).join(''),
+  )
+}
+
+// ── the label fallback carries the catalog badge ─────────────────────────────
+// The shipped seat decorates its own fallback with `model.badge`. This plugin
+// shadows that seat, so its fallback must draw the same decoration: a bare
+// model name would silently drop a badge the shipped seat still shows (badges
+// ride the model listing; nothing about this seat owns them).
+{
+  const withBadge = {
+    ...directoryState,
+    current: { provider: 'volcengine', model: 'glm-5.3' },
+    groups: [
+      {
+        id: 'volcengine',
+        name: '火山方舟',
+        models: [
+          {
+            id: 'glm-5.3',
+            name: 'GLM 5.3',
+            badge: { text: { en: 'New', zh: '新' }, tone: 'info' },
+          },
+        ],
+      },
+    ],
+  }
+  const store = { getSnapshot: () => withBadge, subscribe: () => () => {} }
+  const badgeDirectory = { store, load: async () => withBadge, select: async () => ({ ok: true }) }
+
+  const calls = []
+  let badgeTriggerText = ''
+  // Re-run apply against a ctx whose directory serves the badged catalog.
+  const badgeCtx = {
+    ...fakeCtx,
+    inject: (services, cb) => {
+      let captured = null
+      cb({
+        slots: {
+          inject: (slot, register) => { register() },
+          register: (meta, component) => {
+            captured = { meta, component }
+            return () => {}
+          },
+        },
+        modelDirectories: { directoryFor: () => badgeDirectory },
+        sessions: { subagentAddress: () => undefined },
+        locale: localeStub,
+      })
+      if (captured) {
+        const badgeFace = captured.meta.inject('session-badge')
+        const rendered = captured.component({
+          locked: false,
+          t: key => key,
+          ...badgeFace,
+          renderSlot: (key, owner, opts) => {
+            calls.push({ key, owner, fallback: opts?.fallback })
+            return opts?.fallback
+          },
+        })
+        const trigger = findNode(rendered, n => n.props?.className === 'dml_trigger')[0]
+        badgeTriggerText = collectText(trigger).join('')
+      }
+    },
+  }
+  exportsObj.apply(badgeCtx)
+  check(
+    'the label fallback is the badged name, not a bare model name',
+    calls.length >= 1 && calls[0]?.fallback !== 'GLM 5.3' && calls[0]?.fallback !== undefined,
+    JSON.stringify(calls[0]?.fallback),
+  )
+  check(
+    'the fallback carries the badge text resolved for the active locale',
+    collectText(calls[0]?.fallback).includes('New') && collectText(calls[0]?.fallback).includes('GLM 5.3'),
+    collectText(calls[0]?.fallback).join(''),
+  )
+  check(
+    'the badge precedes the model name in the trigger placement',
+    collectText(calls[0]?.fallback).join('').startsWith('New'),
+    collectText(calls[0]?.fallback).join(''),
+  )
+  check(
+    'the decorated fallback reaches the trigger caption',
+    badgeTriggerText.includes('New') && badgeTriggerText.includes('GLM 5.3'),
+    badgeTriggerText,
   )
 }
 
